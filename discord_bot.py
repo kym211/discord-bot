@@ -68,6 +68,7 @@ data = load()
 def save():
 
     with open(DATA_FILE,"w",encoding="utf-8") as f:
+
         json.dump(
             data,
             f,
@@ -93,25 +94,31 @@ def get_pre(uid,key):
         .get("pre",[])
 
 # =========================
-# DM 전송
+# DM 전송 (중요 수정)
 # =========================
 
 async def send_dm_event(key,text):
 
     for uid,udata in data["events"].items():
 
-        if udata.get(key,{}).get("on"):
+        if not udata.get(key,{}).get("on"):
+            continue
 
-            user=bot.get_user(int(uid))
+        try:
 
-            if user:
+            user = await bot.fetch_user(int(uid))
 
-                try:
-                    await user.send(text)
-                except Exception as e:
-                    print(
-                        f"DM 실패 {uid}: {e}"
-                    )
+            await user.send(text)
+
+            print(
+                f"DM 성공 → {uid} ({key})"
+            )
+
+        except Exception as e:
+
+            print(
+                f"DM 실패 → {uid} ({key}) : {e}"
+            )
 
 # =========================
 # 사전 Embed
@@ -286,6 +293,7 @@ class ToggleButton(discord.ui.Button):
             ev["pre"]=default_pre.copy()
 
         else:
+
             ev["pre"]=[]
 
         save()
@@ -421,21 +429,22 @@ time:str
 
     await interaction.response.send_message(
 
-        f"✅ 공용 아그로 설정 완료\n다음 {start.strftime('%H:%M')}",
+        f"✅ 공용 아그로 설정 완료\n다음 {start.strftime('%H:%M')}"
 
-        ephemeral=False
     )
 
 # =========================
-# LOOP
+# LOOP (중요 수정)
 # =========================
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=30)
 async def loop_check():
 
     global agro_next
 
     now=datetime.now(KST)
+
+    # 아그로 사전알림
 
     if agro_next:
 
@@ -467,14 +476,16 @@ async def loop_check():
 
             save()
 
-    if now.minute==45:
+    # 슈고 등장
+
+    if now.minute == 45 and now.second < 30:
 
         await send_dm_event(
             "슈고45",
             "⏰ 슈고 등장!"
         )
 
-    if now.minute==15:
+    if now.minute == 15 and now.second < 30:
 
         await send_dm_event(
             "슈고15",
