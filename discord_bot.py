@@ -447,6 +447,7 @@ def _cache_age_minutes(cache_key: str, now: datetime) -> float:
 async def on_ready():
     global agro_next
 
+    # 아그로 시간 복원
     try:
         if "agro" in data and "next" in data["agro"]:
             parsed = datetime.fromisoformat(data["agro"]["next"])
@@ -455,6 +456,47 @@ async def on_ready():
             agro_next = parsed
     except Exception as e:
         print("아그로 로드 실패:", e)
+
+    # 슬래시 커맨드 동기화
+    await bot.tree.sync()
+
+    # 재시작 후 영구 View 복원
+    bot.add_view(MainView())
+
+    # 루프 시작
+    if not loop_check.is_running():
+        loop_check.start()
+
+    # 채널 메시지 전송 또는 업데이트
+    ch = bot.get_channel(CHANNEL_ID)
+    if ch:
+        existing_msg = None
+        async for msg in ch.history(limit=50):
+            if msg.author == bot.user and msg.components:
+                for row in msg.components:
+                    for comp in row.children:
+                        if hasattr(comp, "custom_id") and comp.custom_id == "main_open":
+                            existing_msg = msg
+                            break
+                    if existing_msg:
+                        break
+            if existing_msg:
+                break
+
+        if existing_msg:
+            await existing_msg.edit(
+                embed=build_main_embed(),
+                view=MainView()
+            )
+            print("✅ 기존 알림 메시지 업데이트")
+        else:
+            await ch.send(
+                embed=build_main_embed(),
+                view=MainView()
+            )
+            print("✅ 새 알림 메시지 전송")
+
+    print("🔥 시작 완료")
 
 # =========================
 # 슬래시 커맨드: /아그로
@@ -495,52 +537,6 @@ async def cmd_agro(interaction: discord.Interaction, time: str):
         f"알림 설정: {pre_str}",
         ephemeral=False
     )
-
-    # 슬래시 커맨드 동기화 (/아그로 등록)
-    await bot.tree.sync()
-
-    # 재시작 후 영구 View 복원
-    bot.add_view(MainView())
-
-    if not loop_check.is_running():
-        loop_check.start()
-
-    ch = bot.get_channel(CHANNEL_ID)
-    if ch:
-        # -------------------------------------------------------
-        # 기존 메시지 탐색: 봇이 보낸 메시지 중 MainView 버튼이
-        # 있는 메시지를 찾아 edit, 없으면 새로 전송
-        # -------------------------------------------------------
-        existing_msg = None
-        async for msg in ch.history(limit=50):
-            if msg.author == bot.user and msg.components:
-                # custom_id로 메인 버튼 메시지 식별
-                for row in msg.components:
-                    for comp in row.children:
-                        if hasattr(comp, "custom_id") and comp.custom_id == "main_open":
-                            existing_msg = msg
-                            break
-                    if existing_msg:
-                        break
-            if existing_msg:
-                break
-
-        if existing_msg:
-            # 기존 메시지 업데이트 (중복 방지)
-            await existing_msg.edit(
-                embed=build_main_embed(),
-                view=MainView()
-            )
-            print("✅ 기존 알림 메시지 업데이트")
-        else:
-            # 없으면 새로 전송
-            await ch.send(
-                embed=build_main_embed(),
-                view=MainView()
-            )
-            print("✅ 새 알림 메시지 전송")
-
-    print("🔥 시작 완료")
 
 
 bot.run(BOT_TOKEN)
