@@ -5,6 +5,8 @@ import os, json, asyncio
 from datetime import datetime, timedelta
 import pytz
 
+print("프로그램 시작")
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
