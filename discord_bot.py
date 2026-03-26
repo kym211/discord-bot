@@ -12,7 +12,10 @@ KST = pytz.timezone("Asia/Seoul")
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
 
 DATA_FILE = "data.json"
 
@@ -22,25 +25,25 @@ DATA_FILE = "data.json"
 
 EVENT_DEFAULT_PRE = {
 
-"나흐마":[10],
-"카이라":[2],
-"아티쟁":[30],
+    "나흐마":[10],
+    "카이라":[2],
+    "아티쟁":[30],
 
-"슈고45":[0],
-"슈고15":[0],
+    "슈고45":[0],
+    "슈고15":[0],
 
-"아그로":[10]
+    "아그로":[10]
 
 }
 
 EVENT_DESCRIPTION = {
 
-"나흐마":"매 주 토, 일요일 오후 10시",
-"카이라":"매 시각",
-"아티쟁":"매 주 화, 목, 토요일 오후 9시",
-"슈고45":"매 시각 45분",
-"슈고15":"매 시각 15분",
-"아그로":"처치 후 12시간 간격"
+    "나흐마":"매 주 토, 일요일 오후 10시",
+    "카이라":"매 시각",
+    "아티쟁":"매 주 화, 목, 토요일 오후 9시",
+    "슈고45":"매 시각 45분",
+    "슈고15":"매 시각 15분",
+    "아그로":"처치 후 12시간 간격"
 
 }
 
@@ -65,7 +68,12 @@ data = load()
 def save():
 
     with open(DATA_FILE,"w",encoding="utf-8") as f:
-        json.dump(data,f,ensure_ascii=False,indent=2)
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 def get_user(uid):
 
@@ -100,8 +108,10 @@ async def send_dm_event(key,text):
 
                 try:
                     await user.send(text)
-                except:
-                    pass
+                except Exception as e:
+                    print(
+                        f"DM 실패 {uid}: {e}"
+                    )
 
 # =========================
 # 사전 Embed
@@ -140,7 +150,8 @@ def build_pre_embed(key,uid):
             name="선택됨",
 
             value=", ".join(
-                [f"{m}분 전" for m in sorted(selected)]
+                [f"{m}분 전"
+                 for m in sorted(selected)]
             )
 
         )
@@ -274,6 +285,9 @@ class ToggleButton(discord.ui.Button):
 
             ev["pre"]=default_pre.copy()
 
+        else:
+            ev["pre"]=[]
+
         save()
 
         view=ControlView(self.uid)
@@ -389,7 +403,8 @@ time:str
     start=now.replace(
         hour=h,
         minute=m,
-        second=0
+        second=0,
+        microsecond=0
     )
 
     if start<=now:
@@ -411,10 +426,6 @@ time:str
         ephemeral=False
     )
 
-    sent_msg = await interaction.original_response()
-
-    await sent_msg.delete(delay=30)
-
 # =========================
 # LOOP
 # =========================
@@ -425,8 +436,6 @@ async def loop_check():
     global agro_next
 
     now=datetime.now(KST)
-
-    # 아그로 사전알림만
 
     if agro_next:
 
@@ -458,8 +467,6 @@ async def loop_check():
 
             save()
 
-    # 슈고 등장알림
-
     if now.minute==45:
 
         await send_dm_event(
@@ -483,9 +490,9 @@ async def on_ready():
 
     global agro_next
 
-    if "agro" in data:
+    try:
 
-        try:
+        if "agro" in data and "next" in data["agro"]:
 
             agro_next=datetime.fromisoformat(
 
@@ -493,12 +500,14 @@ async def on_ready():
 
             )
 
-        except:
-            pass
+    except Exception as e:
+
+        print("아그로 로드 실패:",e)
 
     await bot.tree.sync()
 
-    loop_check.start()
+    if not loop_check.is_running():
+        loop_check.start()
 
     ch=bot.get_channel(
         CHANNEL_ID
@@ -507,8 +516,11 @@ async def on_ready():
     if ch:
 
         await ch.send(
+
             "🔔 알림 설정",
+
             view=MainView()
+
         )
 
     print("🔥 시작 완료")
