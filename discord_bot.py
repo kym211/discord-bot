@@ -5,6 +5,7 @@ from discord import app_commands
 from datetime import datetime, timedelta
 import pytz
 import asyncio
+import json
 
 # ============================
 # 기본 설정
@@ -20,8 +21,26 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+DATA_FILE = "data.json"
+
 # ============================
-# 역할 설정
+# 데이터 로드/저장
+# ============================
+
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {"prealarms": {}, "agro": {"hour": 0, "minute": 0}}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+data = load_data()
+
+# ============================
+# 역할
 # ============================
 
 ROLE_NAMES = {
@@ -34,145 +53,130 @@ ROLE_NAMES = {
 }
 
 # ============================
-# 유저별 사전알림 데이터
+# 아그로 시간
 # ============================
-
-user_prealarms = {}
-
-# ============================
-# 아그로 시간 설정
-# ============================
-
-agro_start = 0
-agro_minute = 0
 
 def get_agro_times():
-    base = datetime.now(KST).replace(hour=agro_start, minute=agro_minute, second=0, microsecond=0)
-    times = []
+    h = data["agro"]["hour"]
+    m = data["agro"]["minute"]
 
-    for i in range(2):  # 12시간 간격
-        t = base + timedelta(hours=12 * i)
-        times.append((t.hour, t.minute))
+    base = datetime.now(KST).replace(hour=h, minute=m, second=0, microsecond=0)
 
-    return times
+    return [
+        (base.hour, base.minute),
+        ((base + timedelta(hours=12)).hour, (base + timedelta(hours=12)).minute)
+    ]
 
 # ============================
 # 역할 생성
 # ============================
 
-async def get_or_create_role(guild, role_name):
-    role = discord.utils.get(guild.roles, name=role_name)
+async def get_or_create_role(guild, name):
+    role = discord.utils.get(guild.roles, name=name)
     if not role:
-        role = await guild.create_role(name=role_name, mentionable=True)
+        role = await guild.create_role(name=name, mentionable=True)
     return role
 
 # ============================
-# 알림 구독 버튼
+# 버튼 (영구)
 # ============================
 
 class AlarmView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def toggle_role(self, interaction, key):
+    async def toggle(self, interaction, key):
         role = await get_or_create_role(interaction.guild, ROLE_NAMES[key])
-        member = interaction.user
-
-        if role in member.roles:
-            await member.remove_roles(role)
-            await interaction.response.send_message(f"🔕 {ROLE_NAMES[key]} 해제", ephemeral=True)
+        if role in interaction.user.roles:
+            await interaction.user.remove_roles(role)
+            await interaction.response.send_message(f"🔕 {key} 해제", ephemeral=True)
         else:
-            await member.add_roles(role)
-            await interaction.response.send_message(f"🔔 {ROLE_NAMES[key]} 구독", ephemeral=True)
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message(f"🔔 {key} 구독", ephemeral=True)
 
-    @discord.ui.button(label="나흐마")
-    async def b1(self, i, b): await self.toggle_role(i, "나흐마")
+    @discord.ui.button(label="나흐마", custom_id="nahma")
+    async def b1(self, i, b): await self.toggle(i, "나흐마")
 
-    @discord.ui.button(label="아티쟁")
-    async def b2(self, i, b): await self.toggle_role(i, "아티쟁")
+    @discord.ui.button(label="아티쟁", custom_id="arti")
+    async def b2(self, i, b): await self.toggle(i, "아티쟁")
 
-    @discord.ui.button(label="아그로")
-    async def b3(self, i, b): await self.toggle_role(i, "아그로")
+    @discord.ui.button(label="아그로", custom_id="agro")
+    async def b3(self, i, b): await self.toggle(i, "아그로")
 
-    @discord.ui.button(label="시공8")
-    async def b4(self, i, b): await self.toggle_role(i, "시공8")
+    @discord.ui.button(label="시공8", custom_id="s8")
+    async def b4(self, i, b): await self.toggle(i, "시공8")
 
-    @discord.ui.button(label="시공23")
-    async def b5(self, i, b): await self.toggle_role(i, "시공23")
+    @discord.ui.button(label="시공23", custom_id="s23")
+    async def b5(self, i, b): await self.toggle(i, "시공23")
 
-    @discord.ui.button(label="시공2")
-    async def b6(self, i, b): await self.toggle_role(i, "시공2")
+    @discord.ui.button(label="시공2", custom_id="s2")
+    async def b6(self, i, b): await self.toggle(i, "시공2")
 
 # ============================
-# 사전알림 설정 (슬래시)
+# 사전알림
 # ============================
 
-@bot.tree.command(name="사전알림", description="알림별 사전시간 설정")
+@bot.tree.command(name="사전알림")
 async def prealarm(interaction: discord.Interaction, 알림: str, 분: int):
 
-    user_id = interaction.user.id
+    uid = str(interaction.user.id)
 
-    if 알림 not in ROLE_NAMES:
-        await interaction.response.send_message("❌ 알림 이름 오류")
-        return
+    if uid not in data["prealarms"]:
+        data["prealarms"][uid] = {}
 
-    if user_id not in user_prealarms:
-        user_prealarms[user_id] = {}
+    if 알림 not in data["prealarms"][uid]:
+        data["prealarms"][uid][알림] = []
 
-    if 알림 not in user_prealarms[user_id]:
-        user_prealarms[user_id][알림] = []
-
-    if 분 in user_prealarms[user_id][알림]:
-        user_prealarms[user_id][알림].remove(분)
+    if 분 in data["prealarms"][uid][알림]:
+        data["prealarms"][uid][알림].remove(분)
         msg = "삭제"
     else:
-        user_prealarms[user_id][알림].append(분)
+        data["prealarms"][uid][알림].append(분)
         msg = "추가"
 
-    await interaction.response.send_message(f"✅ {알림} {분}분 전 알림 {msg}")
+    save_data()
+
+    await interaction.response.send_message(f"{알림} {분}분 전 {msg}")
 
 # ============================
-# 내 설정 조회
+# 내 설정 확인
 # ============================
 
-@bot.tree.command(name="내알림", description="내 알림 설정 확인")
+@bot.tree.command(name="내알림")
 async def my_alarm(interaction: discord.Interaction):
 
-    data = user_prealarms.get(interaction.user.id, {})
+    uid = str(interaction.user.id)
+    d = data["prealarms"].get(uid, {})
 
-    if not data:
+    if not d:
         await interaction.response.send_message("❌ 없음")
         return
 
-    msg = "📌 설정\n\n"
-
-    for k, v in data.items():
-        times = ", ".join([f"{m}분 전" for m in v])
-        msg += f"{k} → {times}\n"
+    msg = "📌 내 설정\n\n"
+    for k, v in d.items():
+        msg += f"{k} → {', '.join(map(str,v))}분 전\n"
 
     await interaction.response.send_message(msg)
 
 # ============================
-# 아그로 시간 설정 (핵심)
+# 아그로 시간 설정
 # ============================
 
-@bot.tree.command(name="아그로", description="아그로 시간 설정 (예: 600 / 0930)")
+@bot.tree.command(name="아그로")
 async def set_agro(interaction: discord.Interaction, 시간: str):
-
-    global agro_start, agro_minute
 
     try:
         시간 = 시간.zfill(4)
         h = int(시간[:2])
         m = int(시간[2:])
 
-        agro_start = h
-        agro_minute = m
+        data["agro"]["hour"] = h
+        data["agro"]["minute"] = m
+        save_data()
 
         await interaction.response.send_message(
-            f"✅ 설정 완료\n{h:02d}:{m:02d} / {(h+12)%24:02d}:{m:02d}"
+            f"✅ {h:02d}:{m:02d} / {(h+12)%24:02d}:{m:02d}"
         )
-
     except:
         await interaction.response.send_message("❌ 형식 오류")
 
@@ -180,24 +184,25 @@ async def set_agro(interaction: discord.Interaction, 시간: str):
 # 알림 전송
 # ============================
 
-async def send_notification(guild, key, msg):
+async def send_notification(guild, key):
     role = discord.utils.get(guild.roles, name=ROLE_NAMES[key])
     if role:
-        await bot.get_channel(CHANNEL_ID).send(f"{role.mention} {msg}")
+        await bot.get_channel(CHANNEL_ID).send(f"{role.mention} {key} 알림")
 
-async def send_prealarm(guild, label, h, m, before):
+async def send_prealarm(guild, key, mins):
 
-    channel = bot.get_channel(CHANNEL_ID)
     mentions = []
 
     for member in guild.members:
-        data = user_prealarms.get(member.id, {})
-        if label in data and before in data[label]:
+        uid = str(member.id)
+        d = data["prealarms"].get(uid, {})
+
+        if key in d and mins in d[key]:
             mentions.append(member.mention)
 
     if mentions:
-        await channel.send(
-            f"⏱ {' '.join(mentions)}\n{label} {before}분 전"
+        await bot.get_channel(CHANNEL_ID).send(
+            f"⏱ {' '.join(mentions)}\n{key} {mins}분 전"
         )
 
 # ============================
@@ -208,17 +213,12 @@ def get_schedules():
 
     s = []
 
-    # 나흐마
     s.append({"h":22,"m":0,"wd":[5,6],"k":"나흐마"})
-
-    # 아티쟁
     s.append({"h":21,"m":0,"wd":[1,3,5],"k":"아티쟁"})
 
-    # 아그로
     for h,m in get_agro_times():
         s.append({"h":h,"m":m,"wd":None,"k":"아그로"})
 
-    # 시공
     s += [
         {"h":20,"m":0,"wd":None,"k":"시공8"},
         {"h":23,"m":0,"wd":None,"k":"시공23"},
@@ -239,13 +239,13 @@ async def scheduler():
             continue
 
         if now.hour == s["h"] and now.minute == s["m"]:
-            await send_notification(g, s["k"], f"{s['k']} 알림")
+            await send_notification(g, s["k"])
 
         for mins in [5,10,20,30,60]:
             t = now.replace(hour=s["h"], minute=s["m"]) - timedelta(minutes=mins)
 
             if now.hour == t.hour and now.minute == t.minute:
-                await send_prealarm(g, s["k"], s["h"], s["m"], mins)
+                await send_prealarm(g, s["k"], mins)
 
 @scheduler.before_loop
 async def before():
@@ -258,9 +258,14 @@ async def before():
 
 @bot.event
 async def on_ready():
-    print("봇 시작")
+
+    if not hasattr(bot, "synced"):
+        await bot.tree.sync()
+        bot.synced = True
+
     bot.add_view(AlarmView())
-    await bot.tree.sync()
     scheduler.start()
+
+    print("🚀 봇 준비 완료")
 
 bot.run(BOT_TOKEN)
