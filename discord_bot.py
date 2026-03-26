@@ -142,7 +142,20 @@ def build_pre_embed(key,uid):
 
     )
 
-    if selected:
+    # 🔥 슈고 안내문 추가
+    if key in ["슈고45","슈고15"]:
+
+        embed.add_field(
+
+            name="알림 방식",
+
+            value="정시 알림 (0분 전)",
+
+            inline=False
+
+        )
+
+    elif selected:
 
         embed.add_field(
 
@@ -218,7 +231,7 @@ class PreView(discord.ui.View):
         self.uid=uid
         self.message=None
 
-        # 🔥 슈고는 버튼 없음
+        # 🔥 슈고는 버튼 없음 (설명만 표시됨)
         if key in ["슈고45","슈고15"]:
             return
 
@@ -295,7 +308,7 @@ class ToggleButton(discord.ui.Button):
             view=view
         )
 
-        # 🔥 슈고도 설명창은 뜬다
+        # 🔥 슈고도 설명창은 뜨게
         if new_state:
 
             pre_view=PreView(
@@ -379,7 +392,7 @@ class MainView(discord.ui.View):
         )
 
 # =========================
-# 아그로 명령
+# 아그로 슬래시 명령
 # =========================
 
 @bot.tree.command(
