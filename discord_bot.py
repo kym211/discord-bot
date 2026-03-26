@@ -24,7 +24,7 @@ DATA_FILE = "data.json"
 # 로깅
 # ============================
 
-logging.basicConfig(filename="bot.log", level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 # ============================
 # 데이터
@@ -189,42 +189,42 @@ class AlarmView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="🌙 나흐마")
+    @discord.ui.button(label="🌙 나흐마", custom_id="btn_nahma")
     async def b1(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "나흐마")
 
-    @discord.ui.button(label="📅 아티쟁")
+    @discord.ui.button(label="📅 아티쟁", custom_id="btn_arti")
     async def b2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "아티쟁")
 
-    @discord.ui.button(label="⏰ 아그로")
+    @discord.ui.button(label="⏰ 아그로", custom_id="btn_agro")
     async def b3(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "아그로")
 
-    @discord.ui.button(label="🔔 시공20")
+    @discord.ui.button(label="🔔 시공20", custom_id="btn_s8")
     async def b4(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "시공8")
 
-    @discord.ui.button(label="🔔 시공23")
+    @discord.ui.button(label="🔔 시공23", custom_id="btn_s23")
     async def b5(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "시공23")
 
-    @discord.ui.button(label="🔔 시공02")
+    @discord.ui.button(label="🔔 시공02", custom_id="btn_s2")
     async def b6(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "시공2")
 
-    @discord.ui.button(label="🔥 카이라")
+    @discord.ui.button(label="🔥 카이라", custom_id="btn_kaira")
     async def b7(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_menu(interaction, "카이라")
 
-    @discord.ui.button(label="⚙️ ON/OFF")
+    @discord.ui.button(label="⚙️ ON/OFF", custom_id="btn_toggle")
     async def b8(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             view=AlarmControlView(interaction.user.id),
             ephemeral=True
         )
 
-    @discord.ui.button(label="⏱ 아그로 시간")
+    @discord.ui.button(label="⏱ 아그로 시간", custom_id="btn_time")
     async def b9(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(TimeModal())
 
@@ -252,7 +252,7 @@ async def send_prealarm(key, mins):
         )
 
 # ============================
-# 스케줄러
+# 스케줄
 # ============================
 
 def schedules():
@@ -293,7 +293,7 @@ async def scheduler():
         logging.error(f"스케줄 오류: {e}")
 
 # ============================
-# 자동 저장 / 백업
+# 저장 / 백업
 # ============================
 
 @tasks.loop(seconds=10)
@@ -309,13 +309,17 @@ async def backup():
     shutil.copy(DATA_FILE, "backup.json")
 
 # ============================
-# 이벤트
+# 실행
 # ============================
 
 @bot.event
 async def on_ready():
     if not hasattr(bot, "ready"):
         bot.add_view(AlarmView())
+
+        channel = bot.get_channel(CHANNEL_ID)
+        await channel.send("🔔 알림 설정", view=AlarmView())
+
         rebuild_cache(bot.guilds[0])
 
         scheduler.start()
@@ -324,7 +328,7 @@ async def on_ready():
 
         bot.ready = True
 
-    print("🚀 최종 안정화 실행")
+    print("🚀 완전 최종 실행")
 
 @bot.event
 async def on_disconnect():
