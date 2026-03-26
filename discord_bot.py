@@ -26,7 +26,6 @@ EVENT_DEFAULT_PRE = {
 "카이라":[2],
 "아티쟁":[30],
 
-# 슈고는 0분 자동
 "슈고45":[0],
 "슈고15":[0],
 
@@ -50,7 +49,7 @@ EVENT_DESCRIPTION = {
 
 "슈고15":"매 시각 15분",
 
-"아그로":"처치 후 12시간 간격, 점검 시 초기화"
+"아그로":"처치 후 12시간 간격 (공용 시간)"
 
 }
 
@@ -61,7 +60,11 @@ EVENT_DESCRIPTION = {
 def load():
 
     if not os.path.exists(DATA_FILE):
-        return {"events": {}}
+
+        return {
+            "events": {},
+            "agro": {}
+        }
 
     with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
@@ -72,6 +75,12 @@ def save():
 
     with open(DATA_FILE,"w",encoding="utf-8") as f:
         json.dump(data,f,ensure_ascii=False,indent=2)
+
+# =========================
+# 공용 아그로 시간
+# =========================
+
+agro_next = None
 
 # =========================
 
@@ -109,8 +118,6 @@ DEFAULT_EVENTS = {
 
 }
 
-agro_next = {}
-
 def get_user(uid):
 
     data["events"].setdefault(uid,{})
@@ -142,7 +149,6 @@ def build_pre_embed(key,uid):
 
     )
 
-    # 🔥 슈고 안내문 추가
     if key in ["슈고45","슈고15"]:
 
         embed.add_field(
@@ -231,7 +237,6 @@ class PreView(discord.ui.View):
         self.uid=uid
         self.message=None
 
-        # 🔥 슈고는 버튼 없음 (설명만 표시됨)
         if key in ["슈고45","슈고15"]:
             return
 
@@ -308,7 +313,6 @@ class ToggleButton(discord.ui.Button):
             view=view
         )
 
-        # 🔥 슈고도 설명창은 뜨게
         if new_state:
 
             pre_view=PreView(
@@ -336,7 +340,7 @@ class ControlView(discord.ui.View):
 
     def __init__(self,uid):
 
-        super().__init__(timeout=30)
+        super().__init__(timeout=60)  # 🔥 60초
 
         self.uid=uid
         self.message=None
@@ -391,13 +395,15 @@ class MainView(discord.ui.View):
             ephemeral=True
         )
 
+        view.message = await i.original_response()
+
 # =========================
-# 아그로 슬래시 명령
+# 아그로 명령
 # =========================
 
 @bot.tree.command(
 name="아그로",
-description="아그로 시간 설정"
+description="공용 아그로 시간 설정"
 )
 async def agro_cmd(
 interaction: discord.Interaction,
@@ -405,7 +411,7 @@ time:str,
 mode:str=""
 ):
 
-    uid=str(interaction.user.id)
+    global agro_next
 
     t=time.zfill(4)
 
@@ -434,23 +440,24 @@ mode:str=""
         if start<=now:
             start+=timedelta(hours=12)
 
-    agro_next[uid]=start
+    agro_next=start
 
-    u=get_user(uid)
-
-    u.setdefault("아그로",{})
-
-    u["아그로"]["on"]=True
-    u["아그로"]["next"]=start.isoformat()
+    data["agro"]={
+        "on":True,
+        "next":start.isoformat()
+    }
 
     save()
 
     await interaction.response.send_message(
 
-        f"✅ 아그로 설정 완료\n다음 {start.strftime('%H:%M')}",
+        f"✅ 공용 아그로 설정 완료\n다음 {start.strftime('%H:%M')}",
 
-        ephemeral=True
+        ephemeral=False
     )
+
+    # 🔥 30초 후 삭제
+    await interaction.delete_original_response(delay=30)
 
 # =========================
 # LOOP
@@ -459,33 +466,45 @@ mode:str=""
 @tasks.loop(seconds=60)
 async def loop_check():
 
+    global agro_next
+
+    if not agro_next:
+        return
+
     now=datetime.now(KST)
 
-    for uid,next_t in list(agro_next.items()):
+    if now>=agro_next:
 
-        if now>=next_t:
+        ch=bot.get_channel(
+            CHANNEL_ID
+        )
 
-            ch=bot.get_channel(
-                CHANNEL_ID
-            )
+        if ch:
 
-            if ch:
+            mentions=[]
 
-                user=bot.get_user(
-                    int(uid)
-                )
+            for uid,udata in data["events"].items():
+
+                if udata.get("아그로",{}).get("on"):
+
+                    mentions.append(
+                        f"<@{uid}>"
+                    )
+
+            if mentions:
 
                 await ch.send(
-                    f"{user.mention} ⚔️ 아그로!"
+                    " ".join(mentions) +
+                    " ⚔️ 아그로!"
                 )
 
-            new_time=next_t+timedelta(hours=12)
+        new_time=agro_next+timedelta(hours=12)
 
-            agro_next[uid]=new_time
+        agro_next=new_time
 
-            get_user(uid)["아그로"]["next"]=new_time.isoformat()
+        data["agro"]["next"]=new_time.isoformat()
 
-            save()
+        save()
 
 # =========================
 # READY
@@ -494,21 +513,22 @@ async def loop_check():
 @bot.event
 async def on_ready():
 
-    for uid,udata in data["events"].items():
+    global agro_next
 
-        if "아그로" in udata:
+    if "agro" in data:
 
-            agro_data=udata["아그로"]
+        agro_data=data["agro"]
 
-            if agro_data.get("on"):
+        if agro_data.get("on"):
 
-                try:
+            try:
 
-                    agro_next[uid]=datetime.fromisoformat(
-                        agro_data["next"]
-                    )
-                except:
-                    pass
+                agro_next=datetime.fromisoformat(
+                    agro_data["next"]
+                )
+
+            except:
+                pass
 
     await bot.tree.sync()
 
