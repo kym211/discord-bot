@@ -5,8 +5,8 @@ from datetime import datetime
 import pytz
 import asyncio
 
-BOT_TOKEN = "MTQ4NjY0NDY2MDY4MzQwNzQ4MQ.GCbj0R.DGHHUCPhvaYEZMyAF27LLsnNBw4qhXeaR7v_Fs"
-CHANNEL_ID = 1088330134987210783
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 
 MSG_1 = "🔔 **알림 1** - 토/일 오후 10시 알림입니다!"
 MSG_2 = "🔔 **알림 2** - 화/목/토 오후 9시 알림입니다!"
