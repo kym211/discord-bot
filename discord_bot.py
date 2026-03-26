@@ -127,9 +127,18 @@ class PreButton(discord.ui.Button):
 
 class PreView(discord.ui.View):
     def __init__(self, key, uid):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
         for m in [2, 5, 10, 20, 30, 60]:
             self.add_item(PreButton(key, uid, m))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except:
+                pass
 
 # =====================
 # 토글 버튼
@@ -164,9 +173,7 @@ class ToggleButton(discord.ui.Button):
         # 아그로 ON 시도 → 명령어 안내
         if ev.get("type") == "agro" and not currently_on:
             await i.response.send_message(
-                "ℹ️ 아그로는 `/아그로 HHMM` 명령어로 시작점을 지정해야 합니다.\n"
-                "예) `/아그로 0600` → 06:00부터 12시간 간격\n"
-                "예) `/아그로 1254` → 12:54부터 12시간 간격",
+                "⚠️ 약간의 시간 오차가 있을 수 있습니다.",
                 ephemeral=True
             )
             return
@@ -227,8 +234,17 @@ class DeleteSelect(discord.ui.Select):
 
 class DeleteSelectView(discord.ui.View):
     def __init__(self, uid):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
         self.add_item(DeleteSelect(uid))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except:
+                pass
 
 # =====================
 # 컨트롤
@@ -236,7 +252,7 @@ class DeleteSelectView(discord.ui.View):
 
 class ControlView(discord.ui.View):
     def __init__(self, uid):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
 
         # 기본 이벤트
         for k in DEFAULT_EVENTS.keys():
@@ -246,6 +262,15 @@ class ControlView(discord.ui.View):
         for k in get_user(uid).keys():
             if k not in DEFAULT_EVENTS:
                 self.add_item(ToggleButton(k, uid))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except:
+                pass
 
 # =====================
 # 커스텀 생성
@@ -292,8 +317,17 @@ class CustomTimeButton(discord.ui.Button):
 
 class CustomTimeView(discord.ui.View):
     def __init__(self, name, uid):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
         self.add_item(CustomTimeButton(name, uid))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except:
+                pass
 
 class CustomTimeModal(discord.ui.Modal, title="시간 설정"):
     time = discord.ui.TextInput(label="예: 0930")
