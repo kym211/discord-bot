@@ -352,8 +352,12 @@ async def loop_check():
                         cache_key = make_cache_key(f"{key}_{uid}_{pre}", send_at)
                         if cache_key not in sent_cache:
                             sent_cache[cache_key] = True
-                            label = f"{pre}분 전 " if pre > 0 else ""
-                            await send_dm_user(uid, f"{label}{msg}")
+                            if pre > 0:
+                                base = msg.rstrip("!")
+                                notice = f"{base} {pre}분 전!"
+                            else:
+                                notice = msg
+                            await send_dm_user(uid, notice)
 
         # 카이라
         next_kaira = now.replace(minute=0, second=0, microsecond=0)
@@ -368,7 +372,7 @@ async def loop_check():
 
         # 아티쟁
         if weekday in [1, 3, 5]:
-            await check_and_send("아티쟁", "⚔️ 아티쟁 등장!",
+            await check_and_send("아티쟁", "⚔️ 아티쟁 시작!",
                 now.replace(hour=21, minute=0, second=0, microsecond=0))
 
         # 슈고45
