@@ -41,7 +41,7 @@ def save():
 DEFAULT_EVENTS = {
     "나흐마": {"time": [(22, 0)], "weekdays": [5, 6]},
     "아티쟁": {"time": [(21, 0)], "weekdays": [1, 3, 5]},
-    "시공": {"time": [(20,0),(23,0),(2,0)]},  # ✅ 추가
+    "시공": {"time": [(20, 0), (23, 0), (2, 0)]},  # ✅ 추가
 }
 
 # =====================
@@ -67,7 +67,7 @@ def build_pre_embed(key, uid):
 
     embed = discord.Embed(
         title="⏱ 사전 알림 설정",
-        description=f"{key} 알림 기준",
+        description=f"{key} 기준",
         color=0x2b2d31
     )
 
@@ -151,26 +151,48 @@ class ToggleButton(discord.ui.Button):
             await i.response.edit_message(view=ControlView(self.uid))
 
 # =====================
-# 삭제 버튼
+# 삭제 선택 UI
 # =====================
 
-class DeleteButton(discord.ui.Button):
-    def __init__(self, key, uid):
-        super().__init__(label=f"❌ {key}", style=discord.ButtonStyle.secondary)
-        self.key = key
+class DeleteSelect(discord.ui.Select):
+    def __init__(self, uid):
         self.uid = uid
 
-    async def callback(self, i):
-        u = get_user(self.uid)
+        options = [
+            discord.SelectOption(label=k)
+            for k in get_user(uid).keys()
+            if k not in DEFAULT_EVENTS
+        ]
 
-        if self.key in u:
-            del u[self.key]
+        if not options:
+            options = [discord.SelectOption(label="삭제할 항목 없음", value="none")]
+
+        super().__init__(
+            placeholder="삭제할 커스텀 선택",
+            options=options
+        )
+
+    async def callback(self, i):
+        val = self.values[0]
+
+        if val == "none":
+            await i.response.send_message("삭제할 항목 없음", ephemeral=True)
+            return
+
+        u = get_user(self.uid)
+        if val in u:
+            del u[val]
             save()
 
         await i.response.edit_message(
-            content=f"{self.key} 삭제됨",
-            view=ControlView(self.uid)
+            content=f"✅ {val} 삭제됨",
+            view=None
         )
+
+class DeleteSelectView(discord.ui.View):
+    def __init__(self, uid):
+        super().__init__(timeout=120)
+        self.add_item(DeleteSelect(uid))
 
 # =====================
 # 컨트롤
@@ -180,7 +202,7 @@ class ControlView(discord.ui.View):
     def __init__(self, uid):
         super().__init__(timeout=120)
 
-        # 기본
+        # 기본 이벤트
         for k in DEFAULT_EVENTS.keys():
             self.add_item(ToggleButton(k, uid))
 
@@ -188,10 +210,9 @@ class ControlView(discord.ui.View):
         for k in get_user(uid).keys():
             if k not in DEFAULT_EVENTS:
                 self.add_item(ToggleButton(k, uid))
-                self.add_item(DeleteButton(k, uid))  # ✅ 삭제 추가
 
 # =====================
-# 커스텀 (에러 수정)
+# 커스텀 생성 (버그 수정)
 # =====================
 
 class CustomNameModal(discord.ui.Modal, title="커스텀 이름"):
@@ -254,7 +275,6 @@ class CustomTimeModal(discord.ui.Modal, title="시간 설정"):
 
             if not (0 <= h < 24 and 0 <= m < 60):
                 raise ValueError
-
         except:
             await i.response.send_message("❌ 시간 형식 오류", ephemeral=True)
             return
@@ -283,9 +303,16 @@ class MainView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="➕ 커스텀", style=discord.ButtonStyle.secondary)
-    async def custom_btn(self, i, b):
+    @discord.ui.button(label="➕ 커스텀 추가", style=discord.ButtonStyle.secondary)
+    async def add_btn(self, i, b):
         await i.response.send_modal(CustomNameModal())
+
+    @discord.ui.button(label="🗑 커스텀 삭제", style=discord.ButtonStyle.danger)
+    async def del_btn(self, i, b):
+        await i.response.send_message(
+            view=DeleteSelectView(str(i.user.id)),
+            ephemeral=True
+        )
 
 # =====================
 # 알림
@@ -329,11 +356,9 @@ async def loop():
                     if not is_on(uid, key):
                         continue
 
-                    # 정시
                     if diff == 0:
                         await member.send(f"🔔 {key}")
 
-                    # 사전 알림
                     if diff in get_pre(uid, key):
                         await member.send(f"⏱ {key} {diff}분 전")
 
