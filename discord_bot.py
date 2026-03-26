@@ -5,8 +5,13 @@ import os, json, asyncio
 from datetime import datetime, timedelta
 import pytz
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL_ID = int(os.environ["CHANNEL_ID"])
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
+
+if not BOT_TOKEN or not CHANNEL_ID:
+    raise ValueError("환경변수 없음")
+    
+CHANNEL_ID = int(CHANNEL_ID)
 
 KST = pytz.timezone("Asia/Seoul")
 
