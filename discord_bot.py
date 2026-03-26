@@ -12,10 +12,7 @@ KST = pytz.timezone("Asia/Seoul")
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 DATA_FILE = "data.json"
 
@@ -28,8 +25,11 @@ EVENT_DEFAULT_PRE = {
 "나흐마":[10],
 "카이라":[2],
 "아티쟁":[30],
-"슈고45":[],
-"슈고15":[],
+
+# 슈고는 0분 자동
+"슈고45":[0],
+"슈고15":[0],
+
 "아그로":[10]
 
 }
@@ -71,12 +71,9 @@ data = load()
 def save():
 
     with open(DATA_FILE,"w",encoding="utf-8") as f:
-        json.dump(
-            data,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
+        json.dump(data,f,ensure_ascii=False,indent=2)
+
+# =========================
 
 DEFAULT_EVENTS = {
 
@@ -117,7 +114,6 @@ agro_next = {}
 def get_user(uid):
 
     data["events"].setdefault(uid,{})
-
     return data["events"][uid]
 
 def is_on(uid,key):
@@ -134,17 +130,16 @@ def get_pre(uid,key):
 
 def build_pre_embed(key,uid):
 
-    selected = get_pre(uid,key)
+    selected=get_pre(uid,key)
 
-    desc = EVENT_DESCRIPTION.get(key,"")
+    desc=EVENT_DESCRIPTION.get(key,"")
 
-    embed = discord.Embed(
+    embed=discord.Embed(
 
         title=f"⏱ {key}",
-
         description=desc,
-
         color=0x2b2d31
+
     )
 
     if selected:
@@ -154,9 +149,7 @@ def build_pre_embed(key,uid):
             name="선택됨",
 
             value=", ".join(
-
                 [f"{m}분 전" for m in sorted(selected)]
-
             )
 
         )
@@ -171,20 +164,16 @@ class PreButton(discord.ui.Button):
 
     def __init__(self,key,uid,m):
 
-        selected = m in get_pre(uid,key)
+        selected=m in get_pre(uid,key)
 
         super().__init__(
 
             label=f"{m}분",
 
             style=(
-
                 discord.ButtonStyle.success
-
                 if selected
-
                 else discord.ButtonStyle.secondary
-
             )
 
         )
@@ -207,7 +196,6 @@ class PreButton(discord.ui.Button):
         save()
 
         view=PreView(self.key,self.uid)
-
         view.message=i.message
 
         await i.response.edit_message(
@@ -217,6 +205,7 @@ class PreButton(discord.ui.Button):
             ),
 
             view=view
+
         )
 
 class PreView(discord.ui.View):
@@ -228,6 +217,10 @@ class PreView(discord.ui.View):
         self.key=key
         self.uid=uid
         self.message=None
+
+        # 🔥 슈고는 버튼 없음
+        if key in ["슈고45","슈고15"]:
+            return
 
         for m in [2,5,10,20,30,60]:
 
@@ -259,18 +252,16 @@ class ToggleButton(discord.ui.Button):
 
         super().__init__(
 
-            label=f"{key}",
+            label=key,
 
             style=(
-
                 discord.ButtonStyle.success
-
                 if on
                 else discord.ButtonStyle.danger
-
             ),
 
             row=row
+
         )
 
         self.key=key
@@ -288,7 +279,7 @@ class ToggleButton(discord.ui.Button):
 
         if new_state:
 
-            default_pre = EVENT_DEFAULT_PRE.get(
+            default_pre=EVENT_DEFAULT_PRE.get(
                 self.key,
                 []
             )
@@ -298,14 +289,14 @@ class ToggleButton(discord.ui.Button):
         save()
 
         view=ControlView(self.uid)
-
         view.message=i.message
 
         await i.response.edit_message(
             view=view
         )
 
-        if new_state:
+        # 🔥 슈고는 팝업 없음
+        if new_state and self.key not in ["슈고45","슈고15"]:
 
             pre_view=PreView(
                 self.key,self.uid
@@ -318,8 +309,8 @@ class ToggleButton(discord.ui.Button):
                 ),
 
                 view=pre_view,
-
                 ephemeral=True
+
             )
 
             pre_view.message=msg
@@ -358,10 +349,8 @@ class ControlView(discord.ui.View):
     async def on_timeout(self):
 
         try:
-
             if self.message:
                 await self.message.delete()
-
         except:
             pass
 
@@ -384,7 +373,7 @@ class MainView(discord.ui.View):
             str(i.user.id)
         )
 
-        msg=await i.response.send_message(
+        await i.response.send_message(
             view=view,
             ephemeral=True
         )
