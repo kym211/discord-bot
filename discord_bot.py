@@ -47,7 +47,7 @@ EVENT_EMOJI = {
     "아그로": "👹"
 }
 
-PRE_OPTIONS = [0, 2, 5, 10, 20, 30, 60]  # 선택 가능한 사전 알림 시간(분)
+PRE_OPTIONS = [0, 2, 5, 10, 20, 30, 60]
 
 # =========================
 # 데이터
@@ -104,9 +104,25 @@ def make_cache_key(key, dt: datetime) -> str:
 # 임베드 생성
 # =========================
 
-def build_list_embed(uid: str) -> discord.Embed:
-    """1단계: 이벤트 목록 임베드"""
-    embed = discord.Embed(title="🔔 알림 목록", color=0x5865F2)
+def build_main_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🔔 알림 설정",
+        description="아래 버튼을 눌러 알림을 설정하세요.\n각 이벤트를 클릭하면 사전 알림 시간을 선택할 수 있습니다.",
+        color=0x5865F2
+    )
+    lines = []
+    for key, desc in EVENT_DESCRIPTION.items():
+        emoji = EVENT_EMOJI.get(key, "•")
+        lines.append(f"{emoji} **{key}** — {desc}")
+    embed.add_field(name="이벤트 목록", value="\n".join(lines), inline=False)
+    if agro_next:
+        nt = agro_next if agro_next.tzinfo else KST.localize(agro_next)
+        embed.set_footer(text=f"👹 아그로 다음 등장: {nt.strftime('%m/%d %H:%M')}")
+    return embed
+
+
+def build_my_embed(uid: str) -> discord.Embed:
+    embed = discord.Embed(title="🔔 내 알림 설정", color=0x5865F2)
     lines = []
     for key, desc in EVENT_DESCRIPTION.items():
         emoji = EVENT_EMOJI.get(key, "•")
@@ -122,23 +138,86 @@ def build_list_embed(uid: str) -> discord.Embed:
 
 
 def build_pre_embed(uid: str, key: str) -> discord.Embed:
-    """2단계: 사전 알림 시간 선택 임베드"""
     emoji = EVENT_EMOJI.get(key, "•")
     pres = get_pre(uid, key)
     pre_str = ", ".join(f"{p}분 전" if p > 0 else "즉시" for p in pres)
+    on = is_on(uid, key)
     embed = discord.Embed(
         title=f"{emoji} {key} 알림 설정",
         description=(
-            f"**현재 설정:** {pre_str}\n\n"
-            "아래 버튼으로 알림 시간을 ON/OFF 하세요.\n"
-            "선택된 시간(🟢)에 DM 알림이 발송됩니다."
+            f"**상태:** {'🟢 ON' if on else '⚫ OFF'}\n"
+            f"**현재 알림 시간:** {pre_str}\n\n"
+            "원하는 시간을 선택하세요. (복수 선택 가능)"
         ),
         color=0x5865F2
     )
     return embed
 
 # =========================
-# 2단계 View: 사전 알림 시간 선택
+# 채널 고정 버튼 View (영구)
+# =========================
+
+class MainView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key in EVENT_DESCRIPTION:
+            self.add_item(MainEventButton(key=key))
+
+
+class MainEventButton(discord.ui.Button):
+    def __init__(self, key: str):
+        super().__init__(
+            label=key,
+            emoji=EVENT_EMOJI.get(key, "•"),
+            style=discord.ButtonStyle.primary,
+            custom_id=f"main_{key}"
+        )
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        await interaction.response.send_message(
+            embed=build_my_embed(uid),
+            view=MyListView(uid=uid),
+            ephemeral=True
+        )
+
+# =========================
+# 개인 설정 1단계 View
+# =========================
+
+class MyListView(discord.ui.View):
+    def __init__(self, uid: str):
+        super().__init__(timeout=120)
+        self.uid = uid
+        for key in EVENT_DESCRIPTION:
+            self.add_item(EventSelectButton(uid=uid, key=key))
+
+
+class EventSelectButton(discord.ui.Button):
+    def __init__(self, uid: str, key: str):
+        on = is_on(uid, key)
+        super().__init__(
+            label=key,
+            emoji=EVENT_EMOJI.get(key, "•"),
+            style=discord.ButtonStyle.success if on else discord.ButtonStyle.secondary,
+            custom_id=f"sel_{uid}_{key}"
+        )
+        self.uid = uid
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid != self.uid:
+            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            embed=build_pre_embed(uid, self.key),
+            view=PreSelectView(uid=uid, key=self.key)
+        )
+
+# =========================
+# 개인 설정 2단계 View: 시간 선택
 # =========================
 
 class PreSelectView(discord.ui.View):
@@ -146,15 +225,11 @@ class PreSelectView(discord.ui.View):
         super().__init__(timeout=120)
         self.uid = uid
         self.key = key
-        # 사전 시간 토글 버튼들
         for minutes in PRE_OPTIONS:
             self.add_item(PreTimeButton(uid=uid, key=key, minutes=minutes))
-        # ON/OFF 토글
         self.add_item(EventOnOffButton(uid=uid, key=key))
-        # 아그로면 처치 등록 버튼 추가
         if key == "아그로":
             self.add_item(AgroRegisterButton(uid=uid))
-        # 뒤로가기
         self.add_item(BackButton(uid=uid))
 
 
@@ -177,29 +252,22 @@ class PreTimeButton(discord.ui.Button):
         if uid != self.uid:
             await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
             return
-
         user_data = get_user(uid)
         user_data.setdefault(self.key, {})
-        # 현재 pre 목록 (기본값 포함)
         current = list(get_pre(uid, self.key))
-
         if self.minutes in current:
             current.remove(self.minutes)
         else:
             current.append(self.minutes)
             current.sort()
-
         user_data[self.key]["pre"] = current
-        # pre가 하나라도 있으면 자동으로 ON
         if current:
             user_data[self.key]["on"] = True
         save()
 
-        # 버튼 스타일 갱신
         active = self.minutes in current
         self.style = discord.ButtonStyle.success if active else discord.ButtonStyle.secondary
 
-        # ON/OFF 버튼도 갱신
         for item in self.view.children:
             if isinstance(item, EventOnOffButton):
                 on = is_on(uid, self.key)
@@ -228,17 +296,14 @@ class EventOnOffButton(discord.ui.Button):
         if uid != self.uid:
             await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
             return
-
         user_data = get_user(uid)
         user_data.setdefault(self.key, {})
         current = user_data[self.key].get("on", False)
         user_data[self.key]["on"] = not current
         save()
-
         on = user_data[self.key]["on"]
         self.label = f"알림 {'ON 🟢' if on else 'OFF ⚫'}"
         self.style = discord.ButtonStyle.success if on else discord.ButtonStyle.danger
-
         await interaction.response.edit_message(
             embed=build_pre_embed(uid, self.key), view=self.view
         )
@@ -290,57 +355,9 @@ class BackButton(discord.ui.Button):
             await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
             return
         await interaction.response.edit_message(
-            embed=build_list_embed(uid),
-            view=NotifyListView(uid=uid)
+            embed=build_my_embed(uid),
+            view=MyListView(uid=uid)
         )
-
-# =========================
-# 1단계 View: 이벤트 목록
-# =========================
-
-class NotifyListView(discord.ui.View):
-    def __init__(self, uid: str):
-        super().__init__(timeout=120)
-        self.uid = uid
-        for key in EVENT_DESCRIPTION:
-            self.add_item(EventSelectButton(uid=uid, key=key))
-
-
-class EventSelectButton(discord.ui.Button):
-    def __init__(self, uid: str, key: str):
-        on = is_on(uid, key)
-        super().__init__(
-            label=key,
-            emoji=EVENT_EMOJI.get(key, "•"),
-            style=discord.ButtonStyle.success if on else discord.ButtonStyle.secondary,
-            custom_id=f"select_{uid}_{key}"
-        )
-        self.uid = uid
-        self.key = key
-
-    async def callback(self, interaction: discord.Interaction):
-        uid = str(interaction.user.id)
-        if uid != self.uid:
-            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
-            return
-        # 2단계로 전환
-        await interaction.response.edit_message(
-            embed=build_pre_embed(uid, self.key),
-            view=PreSelectView(uid=uid, key=self.key)
-        )
-
-# =========================
-# 슬래시 커맨드: /알림
-# =========================
-
-@bot.tree.command(name="알림", description="알림 설정 목록을 확인하고 설정합니다")
-async def cmd_notify(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    await interaction.response.send_message(
-        embed=build_list_embed(uid),
-        view=NotifyListView(uid=uid),
-        ephemeral=True
-    )
 
 # =========================
 # LOOP
@@ -441,14 +458,46 @@ async def on_ready():
     except Exception as e:
         print("아그로 로드 실패:", e)
 
-    await bot.tree.sync()
+    # 재시작 후 영구 View 복원
+    bot.add_view(MainView())
 
     if not loop_check.is_running():
         loop_check.start()
 
     ch = bot.get_channel(CHANNEL_ID)
     if ch:
-        await ch.send("🔔 알림 설정 완료 — `/알림` 으로 설정하세요!")
+        # -------------------------------------------------------
+        # 기존 메시지 탐색: 봇이 보낸 메시지 중 MainView 버튼이
+        # 있는 메시지를 찾아 edit, 없으면 새로 전송
+        # -------------------------------------------------------
+        existing_msg = None
+        async for msg in ch.history(limit=50):
+            if msg.author == bot.user and msg.components:
+                # custom_id로 메인 버튼 메시지 식별
+                for row in msg.components:
+                    for comp in row.children:
+                        if hasattr(comp, "custom_id") and comp.custom_id.startswith("main_"):
+                            existing_msg = msg
+                            break
+                    if existing_msg:
+                        break
+            if existing_msg:
+                break
+
+        if existing_msg:
+            # 기존 메시지 업데이트 (중복 방지)
+            await existing_msg.edit(
+                embed=build_main_embed(),
+                view=MainView()
+            )
+            print("✅ 기존 알림 메시지 업데이트")
+        else:
+            # 없으면 새로 전송
+            await ch.send(
+                embed=build_main_embed(),
+                view=MainView()
+            )
+            print("✅ 새 알림 메시지 전송")
 
     print("🔥 시작 완료")
 
