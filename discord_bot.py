@@ -11,6 +11,7 @@ KST = pytz.timezone("Asia/Seoul")
 
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True  # 경고 해결용
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -33,15 +34,16 @@ def save():
     dirty = True
 
 # =====================
-# 기본 이벤트
+# 기본 이벤트 (🔥 전부 통일)
 # =====================
 
 DEFAULT_EVENTS = {
     "나흐마": {"time": [(22,0)], "weekdays":[5,6]},
     "아티쟁": {"time": [(21,0)], "weekdays":[1,3,5]},
-    "카이라": {"time": "hourly"},
-    "슈고15": {"time": "15"},
-    "슈고45": {"time": "45"},
+
+    "카이라": {"time": [(h,0) for h in range(24)]},
+    "슈고15": {"time": [(h,15) for h in range(24)]},
+    "슈고45": {"time": [(h,45) for h in range(24)]},
 }
 
 # =====================
@@ -59,7 +61,7 @@ def get_pre(uid, key):
     return get_user(uid).get(key, {}).get("pre", [])
 
 # =====================
-# UI
+# UI - 사전 알림
 # =====================
 
 class PreButton(discord.ui.Button):
@@ -93,6 +95,10 @@ class PreView(discord.ui.View):
         for m in [2,5,10,20,30,60]:
             self.add_item(PreButton(key,uid,m))
 
+# =====================
+# ON/OFF 버튼
+# =====================
+
 class ToggleButton(discord.ui.Button):
     def __init__(self,key,uid):
         style=discord.ButtonStyle.success if is_on(uid,key) else discord.ButtonStyle.danger
@@ -108,7 +114,6 @@ class ToggleButton(discord.ui.Button):
 
         save()
 
-        # 🔥 ON하면 바로 설정창
         if u[self.key]["on"]:
             await i.response.send_message(
                 f"{self.key} 사전알림 설정",
@@ -122,8 +127,14 @@ class ControlView(discord.ui.View):
     def __init__(self,uid):
         super().__init__(timeout=120)
 
-        for k in list(DEFAULT_EVENTS.keys())+list(get_user(uid).keys()):
+        keys = list(DEFAULT_EVENTS.keys()) + list(get_user(uid).keys())
+
+        for k in keys:
             self.add_item(ToggleButton(k,uid))
+
+# =====================
+# 커스텀
+# =====================
 
 class CustomNameModal(discord.ui.Modal,title="커스텀 이름"):
     name=discord.ui.TextInput(label="이름")
@@ -148,6 +159,7 @@ class CustomTimeModal(discord.ui.Modal,title="시간 설정"):
 
     async def on_submit(self,i):
         uid=str(i.user.id)
+
         t=self.time.value.zfill(4)
         h,m=int(t[:2]),int(t[2:])
 
@@ -160,6 +172,10 @@ class CustomTimeModal(discord.ui.Modal,title="시간 설정"):
             view=PreView(self.name,uid),
             ephemeral=True
         )
+
+# =====================
+# 메인 UI
+# =====================
 
 class MainView(discord.ui.View):
     def __init__(self):
@@ -187,7 +203,16 @@ async def send(key):
             if is_on(uid,key):
                 try:
                     await m.send(f"🔔 {key}")
-                except: pass
+                except:
+                    pass
+
+async def send_pre(key):
+    for g in bot.guilds:
+        for m in g.members:
+            uid=str(m.id)
+            if is_on(uid,key):
+                for mins in get_pre(uid,key):
+                    await m.send(f"⏱ {key} {mins}분 전")
 
 # =====================
 # 스케줄
@@ -199,21 +224,10 @@ async def loop():
 
     # 기본 이벤트
     for k,v in DEFAULT_EVENTS.items():
-
-        if v["time"]=="hourly" and now.minute==0:
-            await send(k)
-
-        elif v["time"]=="15" and now.minute==15:
-            await send(k)
-
-        elif v["time"]=="45" and now.minute==45:
-            await send(k)
-
-        else:
-            for h,m in v["time"]:
-                if now.hour==h and now.minute==m:
-                    if not v.get("weekdays") or now.weekday() in v["weekdays"]:
-                        await send(k)
+        for h,m in v["time"]:
+            if now.hour==h and now.minute==m:
+                if not v.get("weekdays") or now.weekday() in v["weekdays"]:
+                    await send(k)
 
     # 커스텀
     for uid,u in data["events"].items():
@@ -224,8 +238,10 @@ async def loop():
                         if v.get("on"):
                             user=bot.get_user(int(uid))
                             if user:
-                                try: await user.send(f"🔔 {k}")
-                                except: pass
+                                try:
+                                    await user.send(f"🔔 {k}")
+                                except:
+                                    pass
 
 # =====================
 # 저장
@@ -253,6 +269,6 @@ async def on_ready():
 
         bot.ready=True
 
-    print("🔥 완전 최종 구조 실행")
+    print("🔥 완전 최종 코드 실행")
 
 bot.run(BOT_TOKEN)
