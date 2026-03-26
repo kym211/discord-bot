@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import os, json
 from datetime import datetime, timedelta
 import pytz
@@ -12,10 +13,7 @@ KST = pytz.timezone("Asia/Seoul")
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 DATA_FILE = "data.json"
 
@@ -39,6 +37,15 @@ EVENT_DESCRIPTION = {
     "슈고45": "매 시각 45분",
     "슈고15": "매 시각 15분",
     "아그로": "처치 후 12시간 간격"
+}
+
+EVENT_EMOJI = {
+    "나흐마": "🔥",
+    "카이라": "⏰",
+    "아티쟁": "⚔️",
+    "슈고45": "🛡️",
+    "슈고15": "🛡️",
+    "아그로": "👹"
 }
 
 # =========================
@@ -65,7 +72,6 @@ def is_on(uid, key):
     return get_user(uid).get(key, {}).get("on", False)
 
 def get_pre(uid, key):
-    # 사용자 지정 pre가 없으면 기본값 사용
     user_pre = get_user(uid).get(key, {}).get("pre", None)
     if user_pre is None:
         return EVENT_DEFAULT_PRE.get(key, [0])
@@ -75,18 +81,6 @@ def get_pre(uid, key):
 # DM 전송
 # =========================
 
-async def send_dm_event(key, text):
-    for uid, udata in data["events"].items():
-        if not udata.get(key, {}).get("on"):
-            continue
-        try:
-            user = await bot.fetch_user(int(uid))
-            await user.send(text)
-            print(f"DM 성공 → {uid} ({key})")
-        except Exception as e:
-            print(f"DM 실패 → {uid} ({key}) : {e}")
-
-# 개별 유저에게 DM 전송
 async def send_dm_user(uid, text):
     try:
         user = await bot.fetch_user(int(uid))
@@ -96,17 +90,138 @@ async def send_dm_user(uid, text):
         print(f"DM 실패 → {uid} : {e}")
 
 # =========================
-# 아그로 변수 (필수)
+# 아그로 변수
 # =========================
 
 agro_next = None
-
-# 이미 발송한 알림 추적 (중복 방지)
-# key: "이벤트키_YYYYMMDDHHMM" → set of uid
 sent_cache: dict[str, bool] = {}
 
 def make_cache_key(key, dt: datetime) -> str:
     return f"{key}_{dt.strftime('%Y%m%d%H%M')}"
+
+# =========================
+# 알림 목록 임베드 생성
+# =========================
+
+def build_status_embed(uid: str) -> discord.Embed:
+    embed = discord.Embed(title="🔔 내 알림 설정", color=0x5865F2)
+    lines = []
+    for key, desc in EVENT_DESCRIPTION.items():
+        emoji = EVENT_EMOJI.get(key, "•")
+        status = "🟢 ON" if is_on(uid, key) else "⚫ OFF"
+        pres = get_pre(uid, key)
+        pre_str = ", ".join(f"{p}분 전" if p > 0 else "즉시" for p in pres)
+        lines.append(f"{emoji} **{key}** {status}\n　{desc}\n　알림: {pre_str}")
+    embed.description = "\n\n".join(lines)
+    if agro_next:
+        nt = agro_next
+        if nt.tzinfo is None:
+            nt = KST.localize(nt)
+        embed.set_footer(text=f"👹 아그로 다음 등장: {nt.strftime('%m/%d %H:%M')}")
+    return embed
+
+# =========================
+# 버튼 View
+# =========================
+
+class NotifyListView(discord.ui.View):
+    def __init__(self, uid: str):
+        super().__init__(timeout=120)
+        self.uid = uid
+        for key in EVENT_DESCRIPTION:
+            self.add_item(EventToggleButton(uid=uid, key=key))
+        self.add_item(AgroRegisterButton(uid=uid))
+        self.add_item(UnsubscribeAllButton(uid=uid))
+
+
+class EventToggleButton(discord.ui.Button):
+    def __init__(self, uid: str, key: str):
+        on = is_on(uid, key)
+        super().__init__(
+            label=f"{key} {'ON' if on else 'OFF'}",
+            emoji=EVENT_EMOJI.get(key, "•"),
+            style=discord.ButtonStyle.success if on else discord.ButtonStyle.secondary,
+            custom_id=f"toggle_{uid}_{key}"
+        )
+        self.uid = uid
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid != self.uid:
+            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
+            return
+        user_data = get_user(uid)
+        user_data.setdefault(self.key, {})
+        current = user_data[self.key].get("on", False)
+        user_data[self.key]["on"] = not current
+        save()
+        on = user_data[self.key]["on"]
+        self.label = f"{self.key} {'ON' if on else 'OFF'}"
+        self.style = discord.ButtonStyle.success if on else discord.ButtonStyle.secondary
+        await interaction.response.edit_message(embed=build_status_embed(uid), view=self.view)
+
+
+class AgroRegisterButton(discord.ui.Button):
+    def __init__(self, uid: str):
+        super().__init__(
+            label="아그로 처치 등록",
+            emoji="👹",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"agro_{uid}"
+        )
+        self.uid = uid
+
+    async def callback(self, interaction: discord.Interaction):
+        global agro_next
+        uid = str(interaction.user.id)
+        if uid != self.uid:
+            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
+            return
+        now = datetime.now(KST)
+        agro_next = now + timedelta(hours=12)
+        data["agro"]["next"] = agro_next.isoformat()
+        save()
+        await interaction.response.edit_message(embed=build_status_embed(uid), view=self.view)
+        await interaction.followup.send(
+            f"👹 아그로 처치 등록 완료!\n다음 등장: **{agro_next.strftime('%m/%d %H:%M')}**",
+            ephemeral=True
+        )
+
+
+class UnsubscribeAllButton(discord.ui.Button):
+    def __init__(self, uid: str):
+        super().__init__(
+            label="전체 구독취소",
+            emoji="🔕",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"unsub_{uid}"
+        )
+        self.uid = uid
+
+    async def callback(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid != self.uid:
+            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
+            return
+        user_data = get_user(uid)
+        for key in EVENT_DESCRIPTION:
+            user_data.setdefault(key, {})
+            user_data[key]["on"] = False
+        save()
+        await interaction.response.edit_message(embed=build_status_embed(uid), view=self.view)
+        await interaction.followup.send("🔕 모든 알림이 해제되었습니다.", ephemeral=True)
+
+# =========================
+# 슬래시 커맨드: /알림
+# =========================
+
+@bot.tree.command(name="알림", description="알림 설정 목록을 확인하고 ON/OFF 합니다")
+async def cmd_notify(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    embed = build_status_embed(uid)
+    view = NotifyListView(uid=uid)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 # =========================
 # LOOP
@@ -119,26 +234,16 @@ async def loop_check():
     try:
         now = datetime.now(KST)
         weekday = now.weekday()
-        hour = now.hour
         minute = now.minute
         second = now.second
 
-        # --------------------------------------------------
-        # [수정] 사전 알림(pre)을 반영한 이벤트 발송 헬퍼
-        # --------------------------------------------------
         async def check_and_send(key, msg, target_dt: datetime):
-            """
-            target_dt: 이벤트 발생 예정 시각 (KST, aware)
-            pre 분 전에 개별 DM 발송. 중복 방지 캐시 사용.
-            """
             for uid in list(data["events"].keys()):
                 if not is_on(uid, key):
                     continue
-                pres = get_pre(uid, key)
-                for pre in pres:
+                for pre in get_pre(uid, key):
                     send_at = target_dt - timedelta(minutes=pre)
                     diff_sec = (now - send_at).total_seconds()
-                    # 발송 윈도우: send_at 기준 ±30초
                     if -30 < diff_sec <= 30:
                         cache_key = make_cache_key(f"{key}_{uid}_{pre}", send_at)
                         if cache_key not in sent_cache:
@@ -146,68 +251,46 @@ async def loop_check():
                             label = f"{pre}분 전 " if pre > 0 else ""
                             await send_dm_user(uid, f"{label}{msg}")
 
-        # --------------------------------------------------
-        # 카이라 — 매 시 정각
-        # --------------------------------------------------
+        # 카이라
         next_kaira = now.replace(minute=0, second=0, microsecond=0)
         if minute > 0:
             next_kaira += timedelta(hours=1)
         await check_and_send("카이라", "⏰ 카이라 등장!", next_kaira)
 
-        # --------------------------------------------------
-        # 나흐마 — 토(5), 일(6) 22:00
-        # --------------------------------------------------
+        # 나흐마
         if weekday in [5, 6]:
-            nahma_dt = now.replace(hour=22, minute=0, second=0, microsecond=0)
-            await check_and_send("나흐마", "🔥 나흐마 등장!", nahma_dt)
+            await check_and_send("나흐마", "🔥 나흐마 등장!",
+                now.replace(hour=22, minute=0, second=0, microsecond=0))
 
-        # --------------------------------------------------
-        # 아티쟁 — 화(1), 목(3), 토(5) 21:00
-        # --------------------------------------------------
+        # 아티쟁
         if weekday in [1, 3, 5]:
-            artisan_dt = now.replace(hour=21, minute=0, second=0, microsecond=0)
-            await check_and_send("아티쟁", "⚔️ 아티쟁 등장!", artisan_dt)
+            await check_and_send("아티쟁", "⚔️ 아티쟁 등장!",
+                now.replace(hour=21, minute=0, second=0, microsecond=0))
 
-        # --------------------------------------------------
-        # 슈고45 — 매 시각 45분
-        # --------------------------------------------------
+        # 슈고45
         next_45 = now.replace(minute=45, second=0, microsecond=0)
         if minute > 45 or (minute == 45 and second > 30):
             next_45 += timedelta(hours=1)
-        await check_and_send("슈고45", "⏰ 슈고 등장! (45분)", next_45)
+        await check_and_send("슈고45", "🛡️ 슈고 등장! (45분)", next_45)
 
-        # --------------------------------------------------
-        # 슈고15 — 매 시각 15분
-        # --------------------------------------------------
+        # 슈고15
         next_15 = now.replace(minute=15, second=0, microsecond=0)
         if minute > 15 or (minute == 15 and second > 30):
             next_15 += timedelta(hours=1)
-        await check_and_send("슈고15", "⏰ 슈고 등장! (15분)", next_15)
+        await check_and_send("슈고15", "🛡️ 슈고 등장! (15분)", next_15)
 
-        # --------------------------------------------------
-        # 아그로 — 처치 후 12시간 간격
-        # [수정] 중복 발송 버그 제거 + timezone 안전 처리
-        # --------------------------------------------------
+        # 아그로
         if agro_next:
-            # [버그3 수정] naive datetime이면 KST로 강제 변환
             if agro_next.tzinfo is None:
                 agro_next = KST.localize(agro_next)
-
-            await check_and_send("아그로", "⚔️ 아그로 등장!", agro_next)
-
-            # 아그로 시각이 지났으면 12시간 후로 갱신
+            await check_and_send("아그로", "👹 아그로 등장!", agro_next)
             if now >= agro_next:
                 agro_next += timedelta(hours=12)
                 data["agro"]["next"] = agro_next.isoformat()
                 save()
 
-        # --------------------------------------------------
-        # 오래된 캐시 정리 (1시간 초과 항목 제거)
-        # --------------------------------------------------
-        expired = [
-            k for k in sent_cache
-            if _cache_age_minutes(k, now) > 60
-        ]
+        # 캐시 정리
+        expired = [k for k in sent_cache if _cache_age_minutes(k, now) > 60]
         for k in expired:
             del sent_cache[k]
 
@@ -216,11 +299,8 @@ async def loop_check():
 
 
 def _cache_age_minutes(cache_key: str, now: datetime) -> float:
-    """캐시 키에서 시각을 파싱해 현재와의 차이(분)를 반환."""
     try:
-        # 형식: "key_uid_pre_YYYYMMDDHHMM"
-        dt_str = cache_key[-12:]
-        dt = KST.localize(datetime.strptime(dt_str, "%Y%m%d%H%M"))
+        dt = KST.localize(datetime.strptime(cache_key[-12:], "%Y%m%d%H%M"))
         return abs((now - dt).total_seconds() / 60)
     except Exception:
         return 0
@@ -236,7 +316,6 @@ async def on_ready():
     try:
         if "agro" in data and "next" in data["agro"]:
             parsed = datetime.fromisoformat(data["agro"]["next"])
-            # [버그3 수정] timezone 보장
             if parsed.tzinfo is None:
                 parsed = KST.localize(parsed)
             agro_next = parsed
@@ -245,13 +324,12 @@ async def on_ready():
 
     await bot.tree.sync()
 
-    # [버그4 수정] 루프 중복 실행 방지
     if not loop_check.is_running():
         loop_check.start()
 
     ch = bot.get_channel(CHANNEL_ID)
     if ch:
-        await ch.send("🔔 알림 설정 완료")
+        await ch.send("🔔 알림 설정 완료 — `/알림` 으로 설정하세요!")
 
     print("🔥 시작 완료")
 
