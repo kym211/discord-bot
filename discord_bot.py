@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import os, json
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -23,56 +22,88 @@ def save():
 data = load()
 
 # ============================
-# 사전알림 선택 View
+# 공통 함수
+# ============================
+
+def get_user_times(uid, key):
+    return data["prealarms"].get(uid, {}).get(key, [])
+
+# ============================
+# 사전알림 선택 View (핵심)
 # ============================
 
 class PreAlarmView(discord.ui.View):
-    def __init__(self, alarm_key):
-        super().__init__(timeout=60)
+    def __init__(self, alarm_key, user_id):
+        super().__init__(timeout=120)
         self.alarm_key = alarm_key
+        self.user_id = user_id
 
-    async def select_time(self, interaction, minutes):
+        self.update_buttons()
 
-        uid = str(interaction.user.id)
+    def update_buttons(self):
+        self.clear_items()
+
+        times = [2,5,10,20,30,60]
+        user_times = get_user_times(self.user_id, self.alarm_key)
+
+        for t in times:
+            label = f"{t}분"
+            if t in user_times:
+                label = f"✅ {t}분"
+
+            self.add_item(PreAlarmButton(t, label, self.alarm_key, self.user_id))
+
+class PreAlarmButton(discord.ui.Button):
+    def __init__(self, minutes, label, key, user_id):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.minutes = minutes
+        self.key = key
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+
+        uid = str(self.user_id)
 
         data["prealarms"].setdefault(uid, {})
-        data["prealarms"][uid].setdefault(self.alarm_key, [])
+        data["prealarms"][uid].setdefault(self.key, [])
 
-        if minutes in data["prealarms"][uid][self.alarm_key]:
-            data["prealarms"][uid][self.alarm_key].remove(minutes)
-            msg = "❌ 제거"
+        if self.minutes in data["prealarms"][uid][self.key]:
+            data["prealarms"][uid][self.key].remove(self.minutes)
         else:
-            data["prealarms"][uid][self.alarm_key].append(minutes)
-            msg = "✅ 추가"
+            data["prealarms"][uid][self.key].append(self.minutes)
 
         save()
 
-        await interaction.response.send_message(
-            f"{self.alarm_key} → {minutes}분 전 {msg}",
-            ephemeral=True
-        )
+        # 🔥 UI 다시 생성
+        view = PreAlarmView(self.key, uid)
+        embed = make_embed(self.key, uid)
 
-    # 버튼들
-    @discord.ui.button(label="2분 전")
-    async def b1(self, i, b): await self.select_time(i, 2)
-
-    @discord.ui.button(label="5분 전")
-    async def b2(self, i, b): await self.select_time(i, 5)
-
-    @discord.ui.button(label="10분 전")
-    async def b3(self, i, b): await self.select_time(i, 10)
-
-    @discord.ui.button(label="20분 전")
-    async def b4(self, i, b): await self.select_time(i, 20)
-
-    @discord.ui.button(label="30분 전")
-    async def b5(self, i, b): await self.select_time(i, 30)
-
-    @discord.ui.button(label="60분 전")
-    async def b6(self, i, b): await self.select_time(i, 60)
+        await interaction.response.edit_message(embed=embed, view=view)
 
 # ============================
-# 메인 알림 View
+# 임베드 생성
+# ============================
+
+def make_embed(key, user_id):
+
+    times = get_user_times(user_id, key)
+
+    if times:
+        txt = ", ".join([f"{t}분 전" for t in sorted(times)])
+    else:
+        txt = "설정 없음"
+
+    return discord.Embed(
+        title=f"⏱ {key} 사전알림 설정",
+        description=(
+            f"현재 설정: **{txt}**\n\n"
+            "버튼을 눌러 추가/제거하세요"
+        ),
+        color=discord.Color.gold()
+    )
+
+# ============================
+# 메인 View
 # ============================
 
 class AlarmView(discord.ui.View):
@@ -81,16 +112,15 @@ class AlarmView(discord.ui.View):
 
     async def open_menu(self, interaction, key):
 
-        embed = discord.Embed(
-            title=f"⏱ {key} 사전알림 설정",
-            description="원하는 시간을 선택하세요 (중복 가능)",
-            color=discord.Color.gold()
-        )
+        uid = str(interaction.user.id)
+
+        embed = make_embed(key, uid)
+        view = PreAlarmView(key, uid)
 
         await interaction.response.send_message(
             embed=embed,
-            view=PreAlarmView(key),
-            ephemeral=True  # 🔥 개인창으로 띄움
+            view=view,
+            ephemeral=True
         )
 
     @discord.ui.button(label="🌙 나흐마", custom_id="nahma")
@@ -123,8 +153,8 @@ async def post_embed():
         title="🔔 알림 설정",
         description=(
             "버튼 클릭 → 사전알림 설정\n\n"
-            "✔ 여러 시간 선택 가능\n"
-            "✔ 다시 누르면 제거됨"
+            "✅ 체크 표시 = 현재 선택됨\n"
+            "🔁 다시 누르면 해제됨"
         ),
         color=discord.Color.blurple()
     )
@@ -132,36 +162,14 @@ async def post_embed():
     await channel.send(embed=embed, view=AlarmView())
 
 # ============================
-# 내 설정 확인
-# ============================
-
-@bot.tree.command(name="내알림")
-async def my_alarm(interaction: discord.Interaction):
-
-    uid = str(interaction.user.id)
-    d = data["prealarms"].get(uid, {})
-
-    if not d:
-        await interaction.response.send_message("❌ 없음")
-        return
-
-    msg = "📌 내 설정\n\n"
-    for k, v in d.items():
-        msg += f"{k} → {', '.join(map(str,v))}분 전\n"
-
-    await interaction.response.send_message(msg)
-
-# ============================
 # 시작
 # ============================
 
 @bot.event
 async def on_ready():
-
     await bot.tree.sync()
     bot.add_view(AlarmView())
     await post_embed()
-
-    print("🚀 UI 준비 완료")
+    print("🚀 완성형 UI 준비 완료")
 
 bot.run(BOT_TOKEN)
