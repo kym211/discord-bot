@@ -36,15 +36,10 @@ EVENT_DEFAULT_PRE = {
 EVENT_DESCRIPTION = {
 
 "나흐마":"매 주 토, 일요일 오후 10시",
-
 "카이라":"매 시각",
-
 "아티쟁":"매 주 화, 목, 토요일 오후 9시",
-
 "슈고45":"매 시각 45분",
-
 "슈고15":"매 시각 15분",
-
 "아그로":"처치 후 12시간 간격"
 
 }
@@ -416,7 +411,9 @@ time:str
         ephemeral=False
     )
 
-    await interaction.delete_original_response(delay=30)
+    sent_msg = await interaction.original_response()
+
+    await sent_msg.delete(delay=30)
 
 # =========================
 # LOOP
@@ -429,7 +426,7 @@ async def loop_check():
 
     now=datetime.now(KST)
 
-    # 아그로 사전알림만 (등장알림 없음)
+    # 아그로 사전알림만
 
     if agro_next:
 
@@ -461,7 +458,7 @@ async def loop_check():
 
             save()
 
-    # 슈고 등장알림 (유지)
+    # 슈고 등장알림
 
     if now.minute==45:
 
