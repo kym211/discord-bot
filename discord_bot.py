@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import os, json
+import asyncio
 from datetime import datetime, timedelta
 import pytz
 
@@ -181,6 +182,8 @@ class OpenListButton(discord.ui.Button):
             view=MyListView(uid=uid),
             ephemeral=True
         )
+        await asyncio.sleep(30)
+        await interaction.delete_original_response()
 
 # =========================
 # 개인 설정 1단계 View
@@ -451,6 +454,8 @@ async def cmd_agro(interaction: discord.Interaction, time: str):
         f"알림 설정: {pre_str}",
         ephemeral=False
     )
+    await asyncio.sleep(30)
+    await interaction.delete_original_response()
 
 # =========================
 # SETUP HOOK — on_ready 전에 커맨드 등록 및 sync
