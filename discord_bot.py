@@ -17,10 +17,6 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 DATA_FILE = "data.json"
 
-# =====================
-# 데이터
-# =====================
-
 def load():
     if not os.path.exists(DATA_FILE):
         return {"events": {}}
@@ -32,12 +28,8 @@ data = load()
 dirty = False
 
 def save():
-    global dirty
-    dirty = True
-
-# =====================
-# 기본 이벤트
-# =====================
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 DEFAULT_EVENTS = {
 
@@ -74,10 +66,6 @@ DEFAULT_EVENTS = {
 
 agro_next = {}
 
-# =====================
-# 유저 데이터
-# =====================
-
 def get_user(uid):
     data["events"].setdefault(uid, {})
     return data["events"][uid]
@@ -87,10 +75,6 @@ def is_on(uid, key):
 
 def get_pre(uid, key):
     return get_user(uid).get(key, {}).get("pre", [])
-
-# =====================
-# EMBED
-# =====================
 
 def build_pre_embed(key, uid):
 
@@ -103,7 +87,6 @@ def build_pre_embed(key, uid):
     )
 
     if selected:
-
         embed.add_field(
             name="현재 선택",
             value=", ".join(
@@ -113,10 +96,6 @@ def build_pre_embed(key, uid):
         )
 
     return embed
-
-# =====================
-# 버튼
-# =====================
 
 class PreButton(discord.ui.Button):
 
@@ -163,7 +142,6 @@ class PreView(discord.ui.View):
         super().__init__(timeout=30)
 
         for m in [2,5,10,20,30,60]:
-
             self.add_item(
                 PreButton(
                     key,
@@ -171,17 +149,6 @@ class PreView(discord.ui.View):
                     m
                 )
             )
-
-    async def on_timeout(self):
-
-        try:
-            await self.message.delete()
-        except:
-            pass
-
-# =====================
-# Toggle
-# =====================
 
 class ToggleButton(discord.ui.Button):
 
@@ -205,21 +172,10 @@ class ToggleButton(discord.ui.Button):
         u = get_user(self.uid)
         u.setdefault(self.key, {})
 
-        ev = DEFAULT_EVENTS.get(self.key, {})
-
         currently_on = is_on(
             self.uid,
             self.key
         )
-
-        if ev.get("type") == "agro" and not currently_on:
-
-            await i.response.send_message(
-                "⚠️ 약간의 시간 오차가 있을수 있습니다",
-                ephemeral=True,
-                delete_after=30
-            )
-            return
 
         u[self.key]["on"] = not currently_on
 
@@ -247,10 +203,6 @@ class ToggleButton(discord.ui.Button):
                 )
             )
 
-# =====================
-# Control UI
-# =====================
-
 class ControlView(discord.ui.View):
 
     def __init__(self, uid):
@@ -260,7 +212,12 @@ class ControlView(discord.ui.View):
         row = 0
         count = 0
 
-        for k in DEFAULT_EVENTS.keys():
+        keys = list(DEFAULT_EVENTS.keys()) + [
+            k for k in get_user(uid).keys()
+            if k not in DEFAULT_EVENTS
+        ]
+
+        for k in keys:
 
             self.add_item(
                 ToggleButton(
@@ -275,146 +232,9 @@ class ControlView(discord.ui.View):
             if count % 5 == 0:
                 row += 1
 
-        for k in get_user(uid).keys():
-
-            if k not in DEFAULT_EVENTS:
-
-                self.add_item(
-                    ToggleButton(
-                        k,
-                        uid,
-                        row=row
-                    )
-                )
-
-                count += 1
-
-                if count % 5 == 0:
-                    row += 1
-
-    async def on_timeout(self):
-
-        try:
-            await self.message.delete()
-        except:
-            pass
-
-# =====================
-# 커스텀 추가
-# =====================
-
-class CustomNameModal(discord.ui.Modal):
-
-    name = discord.ui.TextInput(
-        label="이름 입력"
-    )
-
-    async def on_submit(self, i):
-
-        uid = str(i.user.id)
-
-        name = self.name.value.strip()
-
-        if not name:
-
-            await i.response.send_message(
-                "❌ 이름 오류",
-                ephemeral=True
-            )
-            return
-
-        u = get_user(uid)
-
-        if name in u:
-
-            await i.response.send_message(
-                "❌ 이미 존재",
-                ephemeral=True
-            )
-            return
-
-        u[name] = {
-            "on": True,
-            "time": [],
-            "pre": []
-        }
-
-        save()
-
-        await i.response.send_modal(
-            CustomTimeModal(name)
-        )
-
-class CustomTimeModal(discord.ui.Modal):
-
-    def __init__(self, name):
-
-        super().__init__(
-            title="시간 입력 (예: 0930 1430)"
-        )
-
-        self.name = name
-
-        self.time = discord.ui.TextInput(
-            label="시간"
-        )
-
-        self.add_item(self.time)
-
-    async def on_submit(self, i):
-
-        uid = str(i.user.id)
-
-        raw = self.time.value.split()
-
-        times = []
-
-        for t in raw:
-
-            t = t.zfill(4)
-
-            try:
-
-                h = int(t[:2])
-                m = int(t[2:])
-
-                if not (0 <= h < 24 and 0 <= m < 60):
-                    raise ValueError
-
-                times.append((h, m))
-
-            except:
-
-                await i.response.send_message(
-                    f"❌ 시간 오류: {t}",
-                    ephemeral=True
-                )
-                return
-
-        get_user(uid)[self.name]["time"] = times
-
-        save()
-
-        await i.response.send_message(
-            embed=build_pre_embed(
-                self.name,
-                uid
-            ),
-            view=PreView(
-                self.name,
-                uid
-            ),
-            ephemeral=True
-        )
-
-# =====================
-# 메인 UI
-# =====================
-
 class MainView(discord.ui.View):
 
     def __init__(self):
-
         super().__init__(timeout=None)
 
     @discord.ui.button(
@@ -430,18 +250,117 @@ class MainView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(
-        label="➕ 커스텀 추가",
-        style=discord.ButtonStyle.secondary
-    )
-    async def add_btn(self, i, b):
+# =====================
+# /아그로 명령
+# =====================
 
-        await i.response.send_modal(
-            CustomNameModal()
+@bot.command(name="아그로")
+async def agro_cmd(ctx, time_str: str = "", mode: str = ""):
+
+    uid = str(ctx.author.id)
+
+    try:
+
+        t = time_str.zfill(4)
+
+        h = int(t[:2])
+        m = int(t[2:])
+
+    except:
+
+        await ctx.reply(
+            "❌ 형식 오류\n"
+            "/아그로 0600\n"
+            "/아그로 0130 후에",
+            delete_after=30
+        )
+        return
+
+    now = datetime.now(KST)
+
+    if mode.strip() == "후에":
+
+        delta = timedelta(
+            hours=h,
+            minutes=m
         )
 
+        start = (
+            now + delta
+        ).replace(
+            second=0,
+            microsecond=0
+        )
+
+    else:
+
+        start = now.replace(
+            hour=h,
+            minute=m,
+            second=0,
+            microsecond=0
+        )
+
+        if start <= now:
+
+            start += timedelta(
+                hours=12
+            )
+
+    agro_next[uid] = start
+
+    u = get_user(uid)
+
+    u.setdefault("아그로", {})
+
+    u["아그로"]["on"] = True
+    u["아그로"]["next"] = start.isoformat()
+
+    save()
+
+    await ctx.reply(
+        f"✅ 아그로 설정 완료\n"
+        f"다음: {start.strftime('%H:%M')}",
+        delete_after=30
+    )
+
 # =====================
-# 실행
+# LOOP
+# =====================
+
+@tasks.loop(seconds=60)
+async def check_loop():
+
+    now = datetime.now(KST)
+
+    for uid, next_t in list(agro_next.items()):
+
+        if now >= next_t:
+
+            ch = bot.get_channel(
+                CHANNEL_ID
+            )
+
+            if ch:
+
+                user = bot.get_user(
+                    int(uid)
+                )
+
+                await ch.send(
+                    f"{user.mention} ⚔️ 아그로 시간!"
+                )
+
+            new_time = next_t + timedelta(hours=12)
+
+            agro_next[uid] = new_time
+
+            get_user(uid)["아그로"]["next"] = new_time.isoformat()
+
+            save()
+
+# =====================
+# READY
 # =====================
 
 _ready_sent = False
@@ -455,6 +374,31 @@ async def on_ready():
         return
 
     _ready_sent = True
+
+    # 아그로 복원
+
+    for uid, udata in data["events"].items():
+
+        if "아그로" in udata:
+
+            agro_data = udata["아그로"]
+
+            if (
+                agro_data.get("on")
+                and "next" in agro_data
+            ):
+
+                try:
+
+                    agro_next[uid] = datetime.fromisoformat(
+                        agro_data["next"]
+                    )
+
+                except:
+
+                    pass
+
+    check_loop.start()
 
     ch = bot.get_channel(
         CHANNEL_ID
