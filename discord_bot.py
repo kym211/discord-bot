@@ -61,7 +61,6 @@ def rebuild_cache(guild):
 
     for m in guild.members:
         uid = str(m.id)
-
         for key in EVENTS:
             if data["enabled"].get(uid, {}).get(key, True):
                 subscribers_cache[key].append(m)
@@ -85,7 +84,7 @@ def get_agro_times():
     ]
 
 # ============================
-# UI 버튼
+# UI
 # ============================
 
 class PreAlarmButton(discord.ui.Button):
@@ -100,7 +99,7 @@ class PreAlarmButton(discord.ui.Button):
         self.key = key
         self.user_id = user_id
 
-    async def callback(self, interaction):
+    async def callback(self, interaction: discord.Interaction):
         uid = str(self.user_id)
 
         data["prealarms"].setdefault(uid, {})
@@ -119,8 +118,9 @@ class PreAlarmButton(discord.ui.Button):
         mark_dirty()
         rebuild_cache(interaction.guild)
 
-        view = PreAlarmView(self.key, uid)
-        await interaction.response.edit_message(view=view)
+        await interaction.response.edit_message(
+            view=PreAlarmView(self.key, uid)
+        )
 
 class PreAlarmView(discord.ui.View):
     def __init__(self, key, user_id):
@@ -139,16 +139,19 @@ class ToggleButton(discord.ui.Button):
         self.key = key
         self.user_id = user_id
 
-    async def callback(self, interaction):
+    async def callback(self, interaction: discord.Interaction):
         uid = str(self.user_id)
 
         data["enabled"].setdefault(uid, {})
-        data["enabled"][uid][self.key] = not data["enabled"][uid].get(self.key, True)
+        current = data["enabled"][uid].get(self.key, True)
+        data["enabled"][uid][self.key] = not current
 
         mark_dirty()
         rebuild_cache(interaction.guild)
 
-        await interaction.response.edit_message(view=AlarmControlView(uid))
+        await interaction.response.edit_message(
+            view=AlarmControlView(uid)
+        )
 
 class AlarmControlView(discord.ui.View):
     def __init__(self, user_id):
@@ -159,19 +162,21 @@ class AlarmControlView(discord.ui.View):
 class TimeModal(discord.ui.Modal, title="아그로 시간 설정"):
     time_input = discord.ui.TextInput(label="예: 0930")
 
-    async def on_submit(self, interaction):
+    async def on_submit(self, interaction: discord.Interaction):
         try:
             t = self.time_input.value.zfill(4)
             h, m = int(t[:2]), int(t[2:])
-            data["agro"]["hour"], data["agro"]["minute"] = h, m
+            data["agro"]["hour"] = h
+            data["agro"]["minute"] = m
 
             mark_dirty()
+
             await interaction.response.send_message(
                 f"✅ {h:02d}:{m:02d} / {(h+12)%24:02d}:{m:02d}",
                 ephemeral=True
             )
         except:
-            await interaction.response.send_message("❌ 오류", ephemeral=True)
+            await interaction.response.send_message("❌ 형식 오류", ephemeral=True)
 
 class AlarmView(discord.ui.View):
     def __init__(self):
@@ -184,21 +189,44 @@ class AlarmView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="🌙 나흐마") async def b1(self,i,b): await self.open_menu(i,"나흐마")
-    @discord.ui.button(label="📅 아티쟁") async def b2(self,i,b): await self.open_menu(i,"아티쟁")
-    @discord.ui.button(label="⏰ 아그로") async def b3(self,i,b): await self.open_menu(i,"아그로")
-    @discord.ui.button(label="🔔 시공20") async def b4(self,i,b): await self.open_menu(i,"시공8")
-    @discord.ui.button(label="🔔 시공23") async def b5(self,i,b): await self.open_menu(i,"시공23")
-    @discord.ui.button(label="🔔 시공02") async def b6(self,i,b): await self.open_menu(i,"시공2")
-    @discord.ui.button(label="🔥 카이라") async def b7(self,i,b): await self.open_menu(i,"카이라")
+    @discord.ui.button(label="🌙 나흐마")
+    async def b1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "나흐마")
+
+    @discord.ui.button(label="📅 아티쟁")
+    async def b2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "아티쟁")
+
+    @discord.ui.button(label="⏰ 아그로")
+    async def b3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "아그로")
+
+    @discord.ui.button(label="🔔 시공20")
+    async def b4(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "시공8")
+
+    @discord.ui.button(label="🔔 시공23")
+    async def b5(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "시공23")
+
+    @discord.ui.button(label="🔔 시공02")
+    async def b6(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "시공2")
+
+    @discord.ui.button(label="🔥 카이라")
+    async def b7(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_menu(interaction, "카이라")
 
     @discord.ui.button(label="⚙️ ON/OFF")
-    async def b8(self,i,b):
-        await i.response.send_message(view=AlarmControlView(i.user.id), ephemeral=True)
+    async def b8(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            view=AlarmControlView(interaction.user.id),
+            ephemeral=True
+        )
 
     @discord.ui.button(label="⏱ 아그로 시간")
-    async def b9(self,i,b):
-        await i.response.send_modal(TimeModal())
+    async def b9(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TimeModal())
 
 # ============================
 # 알림 전송
@@ -224,7 +252,7 @@ async def send_prealarm(key, mins):
         )
 
 # ============================
-# 스케줄
+# 스케줄러
 # ============================
 
 def schedules():
@@ -257,6 +285,7 @@ async def scheduler():
 
             for mins in [2,5,10,20,30,60]:
                 t = now.replace(hour=h, minute=m) - timedelta(minutes=mins)
+
                 if now.hour == t.hour and now.minute == t.minute:
                     await send_prealarm(k, mins)
 
@@ -271,7 +300,8 @@ async def scheduler():
 async def auto_save():
     global dirty
     if dirty:
-        json.dump(data, open(DATA_FILE,"w"))
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f)
         dirty = False
 
 @tasks.loop(hours=6)
@@ -284,7 +314,7 @@ async def backup():
 
 @bot.event
 async def on_ready():
-    if not hasattr(bot,"ready"):
+    if not hasattr(bot, "ready"):
         bot.add_view(AlarmView())
         rebuild_cache(bot.guilds[0])
 
@@ -294,7 +324,7 @@ async def on_ready():
 
         bot.ready = True
 
-    print("🚀 운영 최종버전 실행")
+    print("🚀 최종 안정화 실행")
 
 @bot.event
 async def on_disconnect():
