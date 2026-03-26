@@ -8,8 +8,8 @@ import asyncio
 # 설정 (여기만 수정하세요!)
 # ============================
 
-BOT_TOKEN = os.environ["MTQ4NjY0NDY2MDY4MzQwNzQ4MQ.GJ1QDQ.tI3eOWLHmxrlHp6Mr54C6fIOvyLIBZtuX1_Yf8"]
-CHANNEL_ID = 1088330134987210783  # 알림 보낼 채널 ID (정수)
+BOT_TOKEN = os.environ["MTQ4NjY0NDY2MDY4MzQwNzQ4MQ.GVe09y.jfrCwfHVmxDofT0zP7FRaA_2TBeXKGZEe-zWtM"]
+CHANNEL_ID = int(os.environ["1088330134987210783"])  # 알림 보낼 채널 ID (정수)
 
 # 각 알림 메시지 내용
 MSG_1 = "🔔 **알림 1** - 토/일 오후 10시 알림입니다!"
