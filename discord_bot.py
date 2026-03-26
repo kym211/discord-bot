@@ -244,7 +244,7 @@ async def loop_check():
 
             await send_dm_event(
                 "아그로",
-                "⚔️ 아그로!"
+                "⚔️ 아그로 등장!"
             )
 
             new_time=agro_next+timedelta(hours=12)
