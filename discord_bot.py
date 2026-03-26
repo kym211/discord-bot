@@ -307,36 +307,6 @@ class EventOnOffButton(discord.ui.Button):
         )
 
 
-class AgroRegisterButton(discord.ui.Button):
-    def __init__(self, uid: str):
-        super().__init__(
-            label="처치 등록",
-            emoji="👹",
-            style=discord.ButtonStyle.danger,
-            custom_id=f"agro_reg_{uid}",
-            row=2
-        )
-        self.uid = uid
-
-    async def callback(self, interaction: discord.Interaction):
-        global agro_next
-        uid = str(interaction.user.id)
-        if uid != self.uid:
-            await interaction.response.send_message("⚠️ 본인의 알림만 설정할 수 있습니다.", ephemeral=True)
-            return
-        now = datetime.now(KST)
-        agro_next = now + timedelta(hours=12)
-        data["agro"]["next"] = agro_next.isoformat()
-        save()
-        await interaction.response.edit_message(
-            embed=build_pre_embed(uid, "아그로"), view=self.view
-        )
-        await interaction.followup.send(
-            f"👹 아그로 처치 등록!\n다음 등장: **{agro_next.strftime('%m/%d %H:%M')}**",
-            ephemeral=True
-        )
-
-
 class BackButton(discord.ui.Button):
     def __init__(self, uid: str):
         super().__init__(
@@ -440,65 +410,6 @@ def _cache_age_minutes(cache_key: str, now: datetime) -> float:
         return 0
 
 # =========================
-# READY
-# =========================
-
-@bot.event
-async def on_ready():
-    global agro_next
-
-    # 아그로 시간 복원
-    try:
-        if "agro" in data and "next" in data["agro"]:
-            parsed = datetime.fromisoformat(data["agro"]["next"])
-            if parsed.tzinfo is None:
-                parsed = KST.localize(parsed)
-            agro_next = parsed
-    except Exception as e:
-        print("아그로 로드 실패:", e)
-
-    # 슬래시 커맨드 동기화
-    await bot.tree.sync()
-
-    # 재시작 후 영구 View 복원
-    bot.add_view(MainView())
-
-    # 루프 시작
-    if not loop_check.is_running():
-        loop_check.start()
-
-    # 채널 메시지 전송 또는 업데이트
-    ch = bot.get_channel(CHANNEL_ID)
-    if ch:
-        existing_msg = None
-        async for msg in ch.history(limit=50):
-            if msg.author == bot.user and msg.components:
-                for row in msg.components:
-                    for comp in row.children:
-                        if hasattr(comp, "custom_id") and comp.custom_id == "main_open":
-                            existing_msg = msg
-                            break
-                    if existing_msg:
-                        break
-            if existing_msg:
-                break
-
-        if existing_msg:
-            await existing_msg.edit(
-                embed=build_main_embed(),
-                view=MainView()
-            )
-            print("✅ 기존 알림 메시지 업데이트")
-        else:
-            await ch.send(
-                embed=build_main_embed(),
-                view=MainView()
-            )
-            print("✅ 새 알림 메시지 전송")
-
-    print("🔥 시작 완료")
-
-# =========================
 # 슬래시 커맨드: /아그로
 # =========================
 
@@ -507,8 +418,7 @@ async def on_ready():
 async def cmd_agro(interaction: discord.Interaction, time: str):
     global agro_next
 
-    # 입력 파싱: 마지막 2자리 = 분, 나머지 = 시간
-    time = time.strip().zfill(3)  # 최소 3자리 보장
+    time = time.strip().zfill(3)
     try:
         minutes_part = int(time[-2:])
         hours_part = int(time[:-2]) if len(time) > 2 else 0
@@ -537,6 +447,66 @@ async def cmd_agro(interaction: discord.Interaction, time: str):
         f"알림 설정: {pre_str}",
         ephemeral=False
     )
+
+# =========================
+# SETUP HOOK — on_ready 전에 커맨드 등록 및 sync
+# =========================
+
+async def setup_hook():
+    await bot.tree.sync()
+    print("✅ 슬래시 커맨드 동기화 완료")
+
+bot.setup_hook = setup_hook
+
+# =========================
+# READY
+# =========================
+
+@bot.event
+async def on_ready():
+    global agro_next
+
+    # 아그로 시간 복원
+    try:
+        if "agro" in data and "next" in data["agro"]:
+            parsed = datetime.fromisoformat(data["agro"]["next"])
+            if parsed.tzinfo is None:
+                parsed = KST.localize(parsed)
+            agro_next = parsed
+    except Exception as e:
+        print("아그로 로드 실패:", e)
+
+    # 영구 View 복원
+    bot.add_view(MainView())
+
+    # 루프 시작
+    if not loop_check.is_running():
+        loop_check.start()
+
+    # 채널 메시지 전송 또는 업데이트
+    ch = bot.get_channel(CHANNEL_ID)
+    if ch:
+        existing_msg = None
+        async for msg in ch.history(limit=50):
+            if msg.author == bot.user and msg.components:
+                for row in msg.components:
+                    for comp in row.children:
+                        if hasattr(comp, "custom_id") and comp.custom_id == "main_open":
+                            existing_msg = msg
+                            break
+                    if existing_msg:
+                        break
+            if existing_msg:
+                break
+
+        if existing_msg:
+            await existing_msg.edit(embed=build_main_embed(), view=MainView())
+            print("✅ 기존 알림 메시지 업데이트")
+        else:
+            await ch.send(embed=build_main_embed(), view=MainView())
+            print("✅ 새 알림 메시지 전송")
+
+    print(f"🔥 {bot.user} 시작 완료")
 
 
 bot.run(BOT_TOKEN)
