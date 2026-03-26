@@ -65,15 +65,13 @@ def get_pre(uid, key):
 def build_pre_embed(key, uid):
     selected = get_pre(uid, key)
 
-    desc = (
-        "알림 몇 분 전에 받을지 선택하세요!\n"
-        "중복 선택 가능 (예: 30분 전 + 5분 전)\n\n"
-        f"📌 **{key} 알림 기준**"
-    )
-
     embed = discord.Embed(
         title="⏱ 사전 알림 시간 설정",
-        description=desc,
+        description=(
+            "알림 몇 분 전에 받을지 선택하세요!\n"
+            "중복 선택 가능\n\n"
+            f"📌 {key} 기준"
+        ),
         color=0x2b2d31
     )
 
@@ -154,7 +152,7 @@ class ToggleButton(discord.ui.Button):
 
         if u[self.key]["on"]:
             await i.response.send_message(
-                f"✅ {self.key} 알림 활성화",
+                f"✅ {self.key} 활성화",
                 embed=build_pre_embed(self.key, self.uid),
                 view=PreView(self.key, self.uid),
                 ephemeral=True
@@ -174,7 +172,7 @@ class ControlView(discord.ui.View):
             self.add_item(ToggleButton(k, uid))
 
 # =====================
-# 커스텀
+# 커스텀 (수정 핵심)
 # =====================
 
 class CustomNameModal(discord.ui.Modal, title="커스텀 이름"):
@@ -188,7 +186,26 @@ class CustomNameModal(discord.ui.Modal, title="커스텀 이름"):
         u[name] = {"on": True, "time": [], "pre": []}
         save()
 
-        await i.response.send_modal(CustomTimeModal(name))
+        # ✅ 모달 → 버튼 → 모달 구조
+        await i.response.send_message(
+            f"⏰ `{name}` 시간 설정",
+            view=CustomTimeView(name, uid),
+            ephemeral=True
+        )
+
+class CustomTimeButton(discord.ui.Button):
+    def __init__(self, name, uid):
+        super().__init__(label="시간 입력", style=discord.ButtonStyle.primary)
+        self.name = name
+        self.uid = uid
+
+    async def callback(self, i: discord.Interaction):
+        await i.response.send_modal(CustomTimeModal(self.name))
+
+class CustomTimeView(discord.ui.View):
+    def __init__(self, name, uid):
+        super().__init__(timeout=120)
+        self.add_item(CustomTimeButton(name, uid))
 
 class CustomTimeModal(discord.ui.Modal, title="시간 설정"):
     time = discord.ui.TextInput(label="예: 0930")
@@ -199,6 +216,7 @@ class CustomTimeModal(discord.ui.Modal, title="시간 설정"):
 
     async def on_submit(self, i: discord.Interaction):
         uid = str(i.user.id)
+
         t = self.time.value.zfill(4)
         h, m = int(t[:2]), int(t[2:])
 
@@ -247,14 +265,6 @@ async def send_alert(key, suffix=""):
                 except:
                     pass
 
-async def send_custom_alert(uid, key, suffix=""):
-    user = bot.get_user(int(uid))
-    if user:
-        try:
-            await user.send(f"🔔 {key}{suffix}")
-        except:
-            pass
-
 # =====================
 # 스케줄
 # =====================
@@ -264,33 +274,11 @@ async def loop():
     now = datetime.now(KST)
     h, m, wd = now.hour, now.minute, now.weekday()
 
-    # 기본 이벤트
     for key, v in DEFAULT_EVENTS.items():
         for eh, em in v["time"]:
             if h == eh and m == em:
                 if not v.get("weekdays") or wd in v["weekdays"]:
                     await send_alert(key)
-
-    # 사전 알림
-    for key, v in DEFAULT_EVENTS.items():
-        if not v.get("weekdays") or wd in v["weekdays"]:
-            for eh, em in v["time"]:
-                event_total = eh * 60 + em
-                now_total = h * 60 + m
-                diff = event_total - now_total
-                if diff <= 0:
-                    diff += 1440
-
-                for g in bot.guilds:
-                    for member in g.members:
-                        if member.bot:
-                            continue
-                        uid = str(member.id)
-                        if is_on(uid, key) and diff in get_pre(uid, key):
-                            try:
-                                await member.send(f"⏱ {key} {diff}분 전")
-                            except:
-                                pass
 
 # =====================
 # 저장
