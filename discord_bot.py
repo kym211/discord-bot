@@ -41,7 +41,7 @@ def save():
 DEFAULT_EVENTS = {
     "나흐마": {"time": [(22, 0)], "weekdays": [5, 6]},
     "아티쟁": {"time": [(21, 0)], "weekdays": [1, 3, 5]},
-    "카이라": {"time": [(h, 0) for h in range(24)]},
+    "시공": {"time": [(20,0),(23,0),(2,0)]},  # ✅ 추가
 }
 
 # =====================
@@ -59,19 +59,15 @@ def get_pre(uid, key):
     return get_user(uid).get(key, {}).get("pre", [])
 
 # =====================
-# EMBED UI
+# EMBED
 # =====================
 
 def build_pre_embed(key, uid):
     selected = get_pre(uid, key)
 
     embed = discord.Embed(
-        title="⏱ 사전 알림 시간 설정",
-        description=(
-            "알림 몇 분 전에 받을지 선택하세요!\n"
-            "중복 선택 가능\n\n"
-            f"📌 {key} 기준"
-        ),
+        title="⏱ 사전 알림 설정",
+        description=f"{key} 알림 기준",
         color=0x2b2d31
     )
 
@@ -90,25 +86,21 @@ def build_pre_embed(key, uid):
 
 class PreButton(discord.ui.Button):
     def __init__(self, key, uid, m):
-        selected = m in get_pre(uid, key)
-
         super().__init__(
-            label=f"{m}분 전",
-            style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
+            label=f"{m}분",
+            style=discord.ButtonStyle.success if m in get_pre(uid, key) else discord.ButtonStyle.secondary,
             row=0 if m in [2,5,10] else 1
         )
         self.key = key
         self.uid = uid
         self.m = m
 
-    async def callback(self, i: discord.Interaction):
+    async def callback(self, i):
         if not is_on(self.uid, self.key):
             await i.response.send_message("❌ ON 먼저", ephemeral=True)
             return
 
-        u = get_user(self.uid)
-        u.setdefault(self.key, {}).setdefault("pre", [])
-        arr = u[self.key]["pre"]
+        arr = get_user(self.uid).setdefault(self.key, {}).setdefault("pre", [])
 
         if self.m in arr:
             arr.remove(self.m)
@@ -125,11 +117,11 @@ class PreButton(discord.ui.Button):
 class PreView(discord.ui.View):
     def __init__(self, key, uid):
         super().__init__(timeout=120)
-        for m in [2, 5, 10, 20, 30, 60]:
+        for m in [2,5,10,20,30,60]:
             self.add_item(PreButton(key, uid, m))
 
 # =====================
-# ON/OFF 버튼
+# 토글 버튼
 # =====================
 
 class ToggleButton(discord.ui.Button):
@@ -140,11 +132,10 @@ class ToggleButton(discord.ui.Button):
             label=f"🟢 {key}" if on else f"🔴 {key}",
             style=discord.ButtonStyle.success if on else discord.ButtonStyle.danger
         )
-
         self.key = key
         self.uid = uid
 
-    async def callback(self, i: discord.Interaction):
+    async def callback(self, i):
         u = get_user(self.uid)
         u.setdefault(self.key, {})
         u[self.key]["on"] = not is_on(self.uid, self.key)
@@ -152,7 +143,6 @@ class ToggleButton(discord.ui.Button):
 
         if u[self.key]["on"]:
             await i.response.send_message(
-                f"✅ {self.key} 활성화",
                 embed=build_pre_embed(self.key, self.uid),
                 view=PreView(self.key, self.uid),
                 ephemeral=True
@@ -160,38 +150,79 @@ class ToggleButton(discord.ui.Button):
         else:
             await i.response.edit_message(view=ControlView(self.uid))
 
+# =====================
+# 삭제 버튼
+# =====================
+
+class DeleteButton(discord.ui.Button):
+    def __init__(self, key, uid):
+        super().__init__(label=f"❌ {key}", style=discord.ButtonStyle.secondary)
+        self.key = key
+        self.uid = uid
+
+    async def callback(self, i):
+        u = get_user(self.uid)
+
+        if self.key in u:
+            del u[self.key]
+            save()
+
+        await i.response.edit_message(
+            content=f"{self.key} 삭제됨",
+            view=ControlView(self.uid)
+        )
+
+# =====================
+# 컨트롤
+# =====================
+
 class ControlView(discord.ui.View):
     def __init__(self, uid):
         super().__init__(timeout=120)
 
-        keys = list(DEFAULT_EVENTS.keys()) + [
-            k for k in get_user(uid).keys() if k not in DEFAULT_EVENTS
-        ]
-
-        for k in keys:
+        # 기본
+        for k in DEFAULT_EVENTS.keys():
             self.add_item(ToggleButton(k, uid))
 
+        # 커스텀
+        for k in get_user(uid).keys():
+            if k not in DEFAULT_EVENTS:
+                self.add_item(ToggleButton(k, uid))
+                self.add_item(DeleteButton(k, uid))  # ✅ 삭제 추가
+
 # =====================
-# 커스텀 (수정 핵심)
+# 커스텀 (에러 수정)
 # =====================
 
 class CustomNameModal(discord.ui.Modal, title="커스텀 이름"):
     name = discord.ui.TextInput(label="이름")
 
-    async def on_submit(self, i: discord.Interaction):
+    async def on_submit(self, i):
         uid = str(i.user.id)
-        name = self.name.value
+        name = self.name.value.strip()
+
+        if not name:
+            await i.response.send_message("❌ 이름 비어있음", ephemeral=True)
+            return
 
         u = get_user(uid)
+
+        if name in u:
+            await i.response.send_message("❌ 이미 존재", ephemeral=True)
+            return
+
         u[name] = {"on": True, "time": [], "pre": []}
         save()
 
-        # ✅ 모달 → 버튼 → 모달 구조
         await i.response.send_message(
-            f"⏰ `{name}` 시간 설정",
+            f"{name} 생성됨 → 시간 입력",
             view=CustomTimeView(name, uid),
             ephemeral=True
         )
+
+# =====================
+# 시간 입력
+# =====================
 
 class CustomTimeButton(discord.ui.Button):
     def __init__(self, name, uid):
@@ -199,7 +230,7 @@ class CustomTimeButton(discord.ui.Button):
         self.name = name
         self.uid = uid
 
-    async def callback(self, i: discord.Interaction):
+    async def callback(self, i):
         await i.response.send_modal(CustomTimeModal(self.name))
 
 class CustomTimeView(discord.ui.View):
@@ -214,17 +245,24 @@ class CustomTimeModal(discord.ui.Modal, title="시간 설정"):
         super().__init__()
         self.name = name
 
-    async def on_submit(self, i: discord.Interaction):
+    async def on_submit(self, i):
         uid = str(i.user.id)
 
-        t = self.time.value.zfill(4)
-        h, m = int(t[:2]), int(t[2:])
+        try:
+            t = self.time.value.zfill(4)
+            h, m = int(t[:2]), int(t[2:])
+
+            if not (0 <= h < 24 and 0 <= m < 60):
+                raise ValueError
+
+        except:
+            await i.response.send_message("❌ 시간 형식 오류", ephemeral=True)
+            return
 
         get_user(uid)[self.name]["time"] = [(h, m)]
         save()
 
         await i.response.send_message(
-            "⏱ 사전 알림 설정",
             embed=build_pre_embed(self.name, uid),
             view=PreView(self.name, uid),
             ephemeral=True
@@ -238,19 +276,19 @@ class MainView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="📋 알림 목록", style=discord.ButtonStyle.primary)
-    async def list_btn(self, i: discord.Interaction, b):
+    @discord.ui.button(label="📋 목록", style=discord.ButtonStyle.primary)
+    async def list_btn(self, i, b):
         await i.response.send_message(
             view=ControlView(str(i.user.id)),
             ephemeral=True
         )
 
-    @discord.ui.button(label="➕ 커스텀 추가", style=discord.ButtonStyle.secondary)
-    async def custom_btn(self, i: discord.Interaction, b):
+    @discord.ui.button(label="➕ 커스텀", style=discord.ButtonStyle.secondary)
+    async def custom_btn(self, i, b):
         await i.response.send_modal(CustomNameModal())
 
 # =====================
-# 알림 전송
+# 알림
 # =====================
 
 async def send_alert(key, suffix=""):
@@ -272,13 +310,32 @@ async def send_alert(key, suffix=""):
 @tasks.loop(minutes=1)
 async def loop():
     now = datetime.now(KST)
-    h, m, wd = now.hour, now.minute, now.weekday()
+    h, m = now.hour, now.minute
 
     for key, v in DEFAULT_EVENTS.items():
         for eh, em in v["time"]:
-            if h == eh and m == em:
-                if not v.get("weekdays") or wd in v["weekdays"]:
-                    await send_alert(key)
+            event_total = eh * 60 + em
+            now_total = h * 60 + m
+            diff = event_total - now_total
+            if diff <= 0:
+                diff += 1440
+
+            for g in bot.guilds:
+                for member in g.members:
+                    if member.bot:
+                        continue
+                    uid = str(member.id)
+
+                    if not is_on(uid, key):
+                        continue
+
+                    # 정시
+                    if diff == 0:
+                        await member.send(f"🔔 {key}")
+
+                    # 사전 알림
+                    if diff in get_pre(uid, key):
+                        await member.send(f"⏱ {key} {diff}분 전")
 
 # =====================
 # 저장
@@ -312,6 +369,6 @@ async def on_ready():
     loop.start()
     save_loop.start()
 
-    print("🔥 봇 시작 완료")
+    print("🔥 시작 완료")
 
 bot.run(BOT_TOKEN)
