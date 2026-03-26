@@ -19,17 +19,64 @@ bot = commands.Bot(
 
 DATA_FILE = "data.json"
 
+# =========================
+# 기본 사전시간
+# =========================
+
+EVENT_DEFAULT_PRE = {
+
+"나흐마":[10],
+"카이라":[2],
+"아티쟁":[30],
+"슈고45":[],
+"슈고15":[],
+"아그로":[10]
+
+}
+
+# =========================
+# 설명
+# =========================
+
+EVENT_DESCRIPTION = {
+
+"나흐마":"매 주 토, 일요일 오후 10시",
+
+"카이라":"매 시각",
+
+"아티쟁":"매 주 화, 목, 토요일 오후 9시",
+
+"슈고45":"매 시각 45분",
+
+"슈고15":"매 시각 15분",
+
+"아그로":"처치 후 12시간 간격, 점검 시 초기화"
+
+}
+
+# =========================
+# 데이터
+# =========================
+
 def load():
+
     if not os.path.exists(DATA_FILE):
         return {"events": {}}
+
     with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 data = load()
 
 def save():
+
     with open(DATA_FILE,"w",encoding="utf-8") as f:
-        json.dump(data,f,ensure_ascii=False,indent=2)
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 DEFAULT_EVENTS = {
 
@@ -68,35 +115,57 @@ DEFAULT_EVENTS = {
 agro_next = {}
 
 def get_user(uid):
+
     data["events"].setdefault(uid,{})
+
     return data["events"][uid]
 
 def is_on(uid,key):
+
     return get_user(uid).get(key,{}).get("on",False)
 
 def get_pre(uid,key):
+
     return get_user(uid).get(key,{}).get("pre",[])
+
+# =========================
+# Embed
+# =========================
 
 def build_pre_embed(key,uid):
 
     selected = get_pre(uid,key)
 
+    desc = EVENT_DESCRIPTION.get(key,"")
+
     embed = discord.Embed(
-        title="⏱ 사전 알림",
-        description=key,
+
+        title=f"⏱ {key}",
+
+        description=desc,
+
         color=0x2b2d31
     )
 
     if selected:
 
         embed.add_field(
+
             name="선택됨",
+
             value=", ".join(
+
                 [f"{m}분 전" for m in sorted(selected)]
+
             )
+
         )
 
     return embed
+
+# =========================
+# 사전 버튼
+# =========================
 
 class PreButton(discord.ui.Button):
 
@@ -105,12 +174,19 @@ class PreButton(discord.ui.Button):
         selected = m in get_pre(uid,key)
 
         super().__init__(
+
             label=f"{m}분",
+
             style=(
+
                 discord.ButtonStyle.success
+
                 if selected
+
                 else discord.ButtonStyle.secondary
+
             )
+
         )
 
         self.key=key
@@ -131,12 +207,15 @@ class PreButton(discord.ui.Button):
         save()
 
         view=PreView(self.key,self.uid)
+
         view.message=i.message
 
         await i.response.edit_message(
+
             embed=build_pre_embed(
                 self.key,self.uid
             ),
+
             view=view
         )
 
@@ -161,10 +240,16 @@ class PreView(discord.ui.View):
     async def on_timeout(self):
 
         try:
+
             if self.message:
                 await self.message.delete()
+
         except:
             pass
+
+# =========================
+# 토글 버튼
+# =========================
 
 class ToggleButton(discord.ui.Button):
 
@@ -173,12 +258,18 @@ class ToggleButton(discord.ui.Button):
         on=is_on(uid,key)
 
         super().__init__(
+
             label=f"{key}",
+
             style=(
+
                 discord.ButtonStyle.success
+
                 if on
                 else discord.ButtonStyle.danger
+
             ),
+
             row=row
         )
 
@@ -197,14 +288,17 @@ class ToggleButton(discord.ui.Button):
 
         if new_state:
 
-            pre=ev.setdefault("pre",[])
+            default_pre = EVENT_DEFAULT_PRE.get(
+                self.key,
+                []
+            )
 
-            if not pre:
-                pre.append(10)
+            ev["pre"]=default_pre.copy()
 
         save()
 
         view=ControlView(self.uid)
+
         view.message=i.message
 
         await i.response.edit_message(
@@ -218,14 +312,21 @@ class ToggleButton(discord.ui.Button):
             )
 
             msg=await i.followup.send(
+
                 embed=build_pre_embed(
                     self.key,self.uid
                 ),
+
                 view=pre_view,
+
                 ephemeral=True
             )
 
             pre_view.message=msg
+
+# =========================
+# Control UI
+# =========================
 
 class ControlView(discord.ui.View):
 
@@ -240,11 +341,6 @@ class ControlView(discord.ui.View):
         count=0
 
         keys=list(DEFAULT_EVENTS.keys())
-
-        for k in get_user(uid).keys():
-
-            if k not in keys:
-                keys.append(k)
 
         for k in keys:
 
@@ -262,10 +358,16 @@ class ControlView(discord.ui.View):
     async def on_timeout(self):
 
         try:
+
             if self.message:
                 await self.message.delete()
+
         except:
             pass
+
+# =========================
+# 메인 UI
+# =========================
 
 class MainView(discord.ui.View):
 
@@ -286,6 +388,10 @@ class MainView(discord.ui.View):
             view=view,
             ephemeral=True
         )
+
+# =========================
+# 아그로 슬래시 명령
+# =========================
 
 @bot.tree.command(
 name="아그로",
@@ -338,9 +444,15 @@ mode:str=""
     save()
 
     await interaction.response.send_message(
+
         f"✅ 아그로 설정 완료\n다음 {start.strftime('%H:%M')}",
+
         ephemeral=True
     )
+
+# =========================
+# LOOP
+# =========================
 
 @tasks.loop(seconds=60)
 async def loop_check():
@@ -372,6 +484,10 @@ async def loop_check():
             get_user(uid)["아그로"]["next"]=new_time.isoformat()
 
             save()
+
+# =========================
+# READY
+# =========================
 
 @bot.event
 async def on_ready():
