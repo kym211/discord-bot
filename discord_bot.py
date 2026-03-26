@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands, tasks
-import os, json, asyncio, logging, shutil
-from datetime import datetime, timedelta
+import os, json
+from datetime import datetime
 import pytz
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -16,305 +16,233 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 DATA_FILE = "data.json"
 
-logging.basicConfig(level=logging.INFO)
-
-# ============================
+# =====================
 # 데이터
-# ============================
+# =====================
 
 def load():
     if not os.path.exists(DATA_FILE):
-        return {"prealarms": {}, "agro": {"hour": 0, "minute": 0}, "enabled": {}}
+        return {
+            "enabled": {},
+            "custom": {}
+        }
     return json.load(open(DATA_FILE))
 
 data = load()
 dirty = False
 
-def mark_dirty():
+def save():
     global dirty
     dirty = True
 
-# ============================
-# 설정
-# ============================
+# =====================
+# 이벤트
+# =====================
 
-EVENTS = ["나흐마","아티쟁","아그로","시공8","시공23","시공2","카이라"]
-MAX_SELECT = 3
-
-# ============================
-# 캐시
-# ============================
-
-subscribers_cache = {}
-
-def rebuild_cache(guild):
-    global subscribers_cache
-    subscribers_cache = {k: [] for k in EVENTS}
-
-    for m in guild.members:
-        uid = str(m.id)
-        for key in EVENTS:
-            if data["enabled"].get(uid, {}).get(key, False):
-                subscribers_cache[key].append(m)
-
-# ============================
-# 공통
-# ============================
-
-def get_user_times(uid, key):
-    return data["prealarms"].get(uid, {}).get(key, [])
+EVENTS = [
+    "나흐마","아티쟁","아그로",
+    "시공8","시공23","시공2",
+    "카이라","슈고15","슈고45"
+]
 
 def is_enabled(uid, key):
     return data["enabled"].get(uid, {}).get(key, False)
 
-def get_agro_times():
-    h = data["agro"]["hour"]
-    m = data["agro"]["minute"]
+# =====================
+# 캐시
+# =====================
 
-    base = datetime.now(KST).replace(hour=h, minute=m, second=0, microsecond=0)
+cache = {}
 
-    return [
-        (base.hour, base.minute),
-        ((base + timedelta(hours=12)).hour, (base + timedelta(hours=12)).minute)
-    ]
+def rebuild(guild):
+    global cache
+    cache = {k: [] for k in EVENTS}
 
-# ============================
-# UI
-# ============================
+    for m in guild.members:
+        uid = str(m.id)
+        for k in EVENTS:
+            if is_enabled(uid, k):
+                cache[k].append(m)
 
-class PreAlarmButton(discord.ui.Button):
-    def __init__(self, minutes, key, user_id):
-        uid = str(user_id)
-        selected = minutes in get_user_times(uid, key)
+# =====================
+# 커스텀 추가
+# =====================
 
-        style = discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary
-        super().__init__(label=f"{minutes}분", style=style)
+class CustomAddModal(discord.ui.Modal, title="커스텀 알림 추가"):
+    time = discord.ui.TextInput(label="시간 (예: 1320)")
 
-        self.minutes = minutes
-        self.key = key
-        self.user_id = user_id
+    async def on_submit(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
 
-    async def callback(self, interaction: discord.Interaction):
-        uid = str(self.user_id)
+        t = self.time.value.zfill(4)
+        h, m = int(t[:2]), int(t[2:])
 
-        # 🔥 구독 안했으면 차단
-        if not is_enabled(uid, self.key):
-            await interaction.response.send_message(
-                "❌ 먼저 ON 해야 설정 가능",
-                ephemeral=True
-            )
-            return
+        data["custom"].setdefault(uid, [])
+        data["custom"][uid].append({"h": h, "m": m})
 
-        data["prealarms"].setdefault(uid, {})
-        data["prealarms"][uid].setdefault(self.key, [])
+        save()
 
-        arr = data["prealarms"][uid][self.key]
-
-        if self.minutes in arr:
-            arr.remove(self.minutes)
-        else:
-            if len(arr) >= MAX_SELECT:
-                await interaction.response.send_message("❌ 최대 3개", ephemeral=True)
-                return
-            arr.append(self.minutes)
-
-        mark_dirty()
-        rebuild_cache(interaction.guild)
-
-        await interaction.response.edit_message(
-            view=PreAlarmView(self.key, uid)
+        await interaction.response.send_message(
+            f"✅ 추가됨: {h:02d}:{m:02d}",
+            ephemeral=True
         )
 
-class PreAlarmView(discord.ui.View):
-    def __init__(self, key, user_id):
+# =====================
+# 커스텀 삭제 UI
+# =====================
+
+class CustomDeleteButton(discord.ui.Button):
+    def __init__(self, uid, idx, t):
+        super().__init__(label=f"{t['h']:02d}:{t['m']:02d}", style=discord.ButtonStyle.danger)
+        self.uid = uid
+        self.idx = idx
+
+    async def callback(self, i: discord.Interaction):
+        data["custom"][self.uid].pop(self.idx)
+        save()
+
+        await i.response.edit_message(view=CustomDeleteView(self.uid))
+
+class CustomDeleteView(discord.ui.View):
+    def __init__(self, uid):
         super().__init__(timeout=120)
-        for t in [2,5,10,20,30,60]:
-            self.add_item(PreAlarmButton(t, key, user_id))
+        arr = data["custom"].get(uid, [])
+
+        if not arr:
+            self.add_item(discord.ui.Button(label="없음", disabled=True))
+            return
+
+        for idx, t in enumerate(arr):
+            self.add_item(CustomDeleteButton(uid, idx, t))
+
+# =====================
+# ON/OFF
+# =====================
 
 class ToggleButton(discord.ui.Button):
-    def __init__(self, key, user_id):
-        uid = str(user_id)
+    def __init__(self, key, uid):
         enabled = is_enabled(uid, key)
-
         style = discord.ButtonStyle.success if enabled else discord.ButtonStyle.danger
         super().__init__(label=f"{key} {'ON' if enabled else 'OFF'}", style=style)
 
         self.key = key
-        self.user_id = user_id
+        self.uid = uid
 
-    async def callback(self, interaction: discord.Interaction):
-        uid = str(self.user_id)
+    async def callback(self, i: discord.Interaction):
+        data["enabled"].setdefault(self.uid, {})
+        data["enabled"][self.uid][self.key] = not is_enabled(self.uid, self.key)
 
-        data["enabled"].setdefault(uid, {})
-        current = is_enabled(uid, self.key)
-        data["enabled"][uid][self.key] = not current
+        save()
+        rebuild(i.guild)
 
-        mark_dirty()
-        rebuild_cache(interaction.guild)
+        await i.response.edit_message(view=ControlView(self.uid))
 
-        await interaction.response.edit_message(
-            view=AlarmControlView(uid)
-        )
-
-class AlarmControlView(discord.ui.View):
-    def __init__(self, user_id):
+class ControlView(discord.ui.View):
+    def __init__(self, uid):
         super().__init__(timeout=120)
         for k in EVENTS:
-            self.add_item(ToggleButton(k, user_id))
+            self.add_item(ToggleButton(k, uid))
 
-class TimeModal(discord.ui.Modal, title="아그로 시간 설정"):
-    time_input = discord.ui.TextInput(label="예: 0930")
+# =====================
+# 메인 UI
+# =====================
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            t = self.time_input.value.zfill(4)
-            h, m = int(t[:2]), int(t[2:])
-            data["agro"]["hour"] = h
-            data["agro"]["minute"] = m
-
-            mark_dirty()
-
-            await interaction.response.send_message(
-                f"✅ {h:02d}:{m:02d} / {(h+12)%24:02d}:{m:02d}",
-                ephemeral=True
-            )
-        except:
-            await interaction.response.send_message("❌ 형식 오류", ephemeral=True)
-
-class AlarmView(discord.ui.View):
+class MainView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def open_menu(self, interaction, key):
-        uid = str(interaction.user.id)
+    @discord.ui.button(label="⚙️ ON/OFF", custom_id="main_toggle")
+    async def toggle(self, i, b):
+        await i.response.send_message(view=ControlView(str(i.user.id)), ephemeral=True)
 
-        status = "🟢 ON" if is_enabled(uid, key) else "🔴 OFF"
+    @discord.ui.button(label="➕ 커스텀 추가", custom_id="custom_add")
+    async def add(self, i, b):
+        await i.response.send_modal(CustomAddModal())
 
-        await interaction.response.send_message(
-            f"{key} 설정\n현재 상태: {status}",
-            view=PreAlarmView(key, uid),
+    @discord.ui.button(label="🗑 커스텀 삭제", custom_id="custom_del")
+    async def delete(self, i, b):
+        await i.response.send_message(
+            view=CustomDeleteView(str(i.user.id)),
             ephemeral=True
         )
 
-    @discord.ui.button(label="🌙 나흐마", custom_id="btn_nahma")
-    async def b1(self, i, b): await self.open_menu(i,"나흐마")
-
-    @discord.ui.button(label="📅 아티쟁", custom_id="btn_arti")
-    async def b2(self, i, b): await self.open_menu(i,"아티쟁")
-
-    @discord.ui.button(label="⏰ 아그로", custom_id="btn_agro")
-    async def b3(self, i, b): await self.open_menu(i,"아그로")
-
-    @discord.ui.button(label="🔔 시공20", custom_id="btn_s8")
-    async def b4(self, i, b): await self.open_menu(i,"시공8")
-
-    @discord.ui.button(label="🔔 시공23", custom_id="btn_s23")
-    async def b5(self, i, b): await self.open_menu(i,"시공23")
-
-    @discord.ui.button(label="🔔 시공02", custom_id="btn_s2")
-    async def b6(self, i, b): await self.open_menu(i,"시공2")
-
-    @discord.ui.button(label="🔥 카이라", custom_id="btn_kaira")
-    async def b7(self, i, b): await self.open_menu(i,"카이라")
-
-    @discord.ui.button(label="⚙️ ON/OFF", custom_id="btn_toggle")
-    async def b8(self, i, b):
-        await i.response.send_message(view=AlarmControlView(i.user.id), ephemeral=True)
-
-    @discord.ui.button(label="⏱ 아그로 시간", custom_id="btn_time")
-    async def b9(self, i, b):
-        await i.response.send_modal(TimeModal())
-
-# ============================
+# =====================
 # 알림
-# ============================
+# =====================
 
-async def send_notification(key):
-    users = subscribers_cache.get(key, [])
+async def send_event(key):
+    users = cache.get(key, [])
     if users:
         await bot.get_channel(CHANNEL_ID).send(
             f"{' '.join([u.mention for u in users])}\n🔔 {key}"
         )
 
-async def send_prealarm(key, mins):
-    users = []
-    for m in subscribers_cache.get(key, []):
-        uid = str(m.id)
-        if mins in get_user_times(uid, key):
-            users.append(m)
+async def send_custom():
+    now = datetime.now(KST)
 
-    if users:
-        await bot.get_channel(CHANNEL_ID).send(
-            f"⏱ {' '.join([u.mention for u in users])} {key} {mins}분 전"
-        )
+    for uid, arr in data["custom"].items():
+        for t in arr:
+            if now.hour == t["h"] and now.minute == t["m"]:
+                user = bot.get_user(int(uid))
+                if user:
+                    try:
+                        await user.send(f"🔔 개인 알림 {t['h']:02d}:{t['m']:02d}")
+                    except:
+                        pass
 
-# ============================
+# =====================
 # 스케줄
-# ============================
-
-def schedules():
-    s = []
-    s.append((22,0,"나흐마",[5,6]))
-    s.append((21,0,"아티쟁",[1,3,5]))
-
-    for h,m in get_agro_times():
-        s.append((h,m,"아그로",None))
-
-    s += [(20,0,"시공8",None),(23,0,"시공23",None),(2,0,"시공2",None)]
-
-    for h in range(24):
-        s.append((h,0,"카이라",None))
-
-    return s
+# =====================
 
 @tasks.loop(minutes=1)
 async def scheduler():
     now = datetime.now(KST)
 
-    for h,m,k,wd in schedules():
+    if now.hour == 22 and now.weekday() in [5,6]:
+        await send_event("나흐마")
 
-        if wd and now.weekday() not in wd:
-            continue
+    if now.hour == 21 and now.weekday() in [1,3,5]:
+        await send_event("아티쟁")
 
-        if now.hour == h and now.minute == m:
-            await send_notification(k)
+    if now.minute == 0:
+        await send_event("카이라")
 
-        for mins in [2,5,10,20,30,60]:
-            t = now.replace(hour=h, minute=m) - timedelta(minutes=mins)
+    if now.minute == 15:
+        await send_event("슈고15")
 
-            if now.hour == t.hour and now.minute == t.minute:
-                await send_prealarm(k, mins)
+    if now.minute == 45:
+        await send_event("슈고45")
 
-# ============================
+    await send_custom()
+
+# =====================
 # 저장
-# ============================
+# =====================
 
 @tasks.loop(seconds=10)
-async def auto_save():
+async def autosave():
     global dirty
     if dirty:
         json.dump(data, open(DATA_FILE,"w"))
         dirty = False
 
-# ============================
+# =====================
 # 실행
-# ============================
+# =====================
 
 @bot.event
 async def on_ready():
-    if not hasattr(bot, "ready"):
-        bot.add_view(AlarmView())
+    if not hasattr(bot,"ready"):
+        ch = bot.get_channel(CHANNEL_ID)
+        await ch.send("🔔 알림 설정", view=MainView())
 
-        channel = bot.get_channel(CHANNEL_ID)
-        await channel.send("🔔 알림 설정", view=AlarmView())
-
-        rebuild_cache(bot.guilds[0])
+        rebuild(bot.guilds[0])
 
         scheduler.start()
-        auto_save.start()
+        autosave.start()
 
         bot.ready = True
 
-    print("🚀 완전 최종 UX 버전 실행")
+    print("🔥 완전체 최종 실행")
 
 bot.run(BOT_TOKEN)
