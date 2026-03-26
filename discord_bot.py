@@ -17,44 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 DATA_FILE = "data.json"
 
 # =========================
-# 기본 사전시간
-# =========================
-
-EVENT_DEFAULT_PRE = {
-
-"나흐마":[10],
-"카이라":[2],
-"아티쟁":[30],
-
-"슈고45":[0],
-"슈고15":[0],
-
-"아그로":[10]
-
-}
-
-# =========================
-# 설명
-# =========================
-
-EVENT_DESCRIPTION = {
-
-"나흐마":"매 주 토, 일요일 오후 10시",
-
-"카이라":"매 시각",
-
-"아티쟁":"매 주 화, 목, 토요일 오후 9시",
-
-"슈고45":"매 시각 45분",
-
-"슈고15":"매 시각 15분",
-
-"아그로":"처치 후 12시간 간격 (공용 시간)"
-
-}
-
-# =========================
-# 데이터
+# 기본 데이터
 # =========================
 
 def load():
@@ -77,7 +40,7 @@ def save():
         json.dump(data,f,ensure_ascii=False,indent=2)
 
 # =========================
-# DM 전송 함수 (핵심)
+# DM 전송 함수
 # =========================
 
 async def send_dm_event(event_name, text):
@@ -96,14 +59,136 @@ async def send_dm_event(event_name, text):
                     pass
 
 # =========================
-# 공용 아그로 시간
+# 버튼 UI
+# =========================
+
+class ToggleButton(discord.ui.Button):
+
+    def __init__(self,key,uid,row):
+
+        on=data["events"]\
+            .get(uid,{})\
+            .get(key,{})\
+            .get("on",False)
+
+        super().__init__(
+
+            label=key,
+
+            style=(
+                discord.ButtonStyle.success
+                if on
+                else discord.ButtonStyle.danger
+            ),
+
+            row=row
+
+        )
+
+        self.key=key
+        self.uid=uid
+
+    async def callback(self,i):
+
+        u=data["events"].setdefault(
+            self.uid,
+            {}
+        )
+
+        ev=u.setdefault(
+            self.key,
+            {}
+        )
+
+        ev["on"]=not ev.get(
+            "on",
+            False
+        )
+
+        save()
+
+        view=ControlView(self.uid)
+        view.message=i.message
+
+        await i.response.edit_message(
+            view=view
+        )
+
+# =========================
+
+class ControlView(discord.ui.View):
+
+    def __init__(self,uid):
+
+        super().__init__(timeout=60)
+
+        self.uid=uid
+        self.message=None
+
+        keys=[
+            "나흐마",
+            "카이라",
+            "아티쟁",
+            "슈고45",
+            "슈고15",
+            "아그로"
+        ]
+
+        row=0
+        count=0
+
+        for k in keys:
+
+            self.add_item(
+                ToggleButton(
+                    k,
+                    uid,
+                    row
+                )
+            )
+
+            count+=1
+
+            if count%5==0:
+                row+=1
+
+    async def on_timeout(self):
+
+        try:
+            if self.message:
+                await self.message.delete()
+        except:
+            pass
+
+# =========================
+
+class MainView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="📋 목록",
+        style=discord.ButtonStyle.primary
+    )
+    async def list_btn(self,i,b):
+
+        view=ControlView(
+            str(i.user.id)
+        )
+
+        await i.response.send_message(
+            view=view,
+            ephemeral=True
+        )
+
+        view.message = await i.original_response()
+
+# =========================
+# 아그로
 # =========================
 
 agro_next = None
-
-# =========================
-# 아그로 명령
-# =========================
 
 @bot.tree.command(
 name="아그로",
@@ -163,7 +248,7 @@ mode:str=""
     await interaction.delete_original_response(delay=30)
 
 # =========================
-# LOOP (모든 알림 핵심)
+# 알림 루프
 # =========================
 
 @tasks.loop(seconds=60)
@@ -173,10 +258,7 @@ async def loop_check():
 
     now=datetime.now(KST)
 
-    # =====================
-    # 카이라 (매시)
-    # =====================
-
+    # 카이라
     if now.minute==0:
 
         await send_dm_event(
@@ -184,10 +266,7 @@ async def loop_check():
             "⏰ 카이라 등장!"
         )
 
-    # =====================
     # 슈고45
-    # =====================
-
     if now.minute==45:
 
         await send_dm_event(
@@ -195,10 +274,7 @@ async def loop_check():
             "⏰ 슈고 45분 등장!"
         )
 
-    # =====================
     # 슈고15
-    # =====================
-
     if now.minute==15:
 
         await send_dm_event(
@@ -206,11 +282,7 @@ async def loop_check():
             "⏰ 슈고 15분 등장!"
         )
 
-    # =====================
     # 나흐마
-    # 토(5),일(6) 22:00
-    # =====================
-
     if now.weekday() in [5,6]:
 
         if now.hour==22 and now.minute==0:
@@ -220,11 +292,7 @@ async def loop_check():
                 "⏰ 나흐마 등장!"
             )
 
-    # =====================
     # 아티쟁
-    # 화(1),목(3),토(5)
-    # =====================
-
     if now.weekday() in [1,3,5]:
 
         if now.hour==21 and now.minute==0:
@@ -234,17 +302,14 @@ async def loop_check():
                 "⏰ 아티쟁 등장!"
             )
 
-    # =====================
     # 아그로
-    # =====================
-
     if agro_next:
 
         if now>=agro_next:
 
             await send_dm_event(
                 "아그로",
-                "⚔️ 아그로 등장!"
+                "⚔️ 아그로!"
             )
 
             new_time=agro_next+timedelta(hours=12)
