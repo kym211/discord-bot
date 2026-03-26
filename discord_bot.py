@@ -160,19 +160,17 @@ def build_pre_embed(uid: str, key: str) -> discord.Embed:
 class MainView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        for key in EVENT_DESCRIPTION:
-            self.add_item(MainEventButton(key=key))
+        self.add_item(OpenListButton())
 
 
-class MainEventButton(discord.ui.Button):
-    def __init__(self, key: str):
+class OpenListButton(discord.ui.Button):
+    def __init__(self):
         super().__init__(
-            label=key,
-            emoji=EVENT_EMOJI.get(key, "•"),
+            label="날 목록",
+            emoji="🔔",
             style=discord.ButtonStyle.primary,
-            custom_id=f"main_{key}"
+            custom_id="main_open"
         )
-        self.key = key
 
     async def callback(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
@@ -458,6 +456,10 @@ async def on_ready():
     except Exception as e:
         print("아그로 로드 실패:", e)
 
+    # 슬래시 커맨드 초기화 (이전에 등록된 /알림 등 제거)
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+
     # 재시작 후 영구 View 복원
     bot.add_view(MainView())
 
@@ -476,7 +478,7 @@ async def on_ready():
                 # custom_id로 메인 버튼 메시지 식별
                 for row in msg.components:
                     for comp in row.children:
-                        if hasattr(comp, "custom_id") and comp.custom_id.startswith("main_"):
+                        if hasattr(comp, "custom_id") and comp.custom_id == "main_open":
                             existing_msg = msg
                             break
                     if existing_msg:
