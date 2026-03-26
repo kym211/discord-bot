@@ -77,325 +77,29 @@ def save():
         json.dump(data,f,ensure_ascii=False,indent=2)
 
 # =========================
+# DM 전송 함수 (핵심)
+# =========================
+
+async def send_dm_event(event_name, text):
+
+    for uid, udata in data["events"].items():
+
+        if udata.get(event_name,{}).get("on"):
+
+            user = bot.get_user(int(uid))
+
+            if user:
+
+                try:
+                    await user.send(text)
+                except:
+                    pass
+
+# =========================
 # 공용 아그로 시간
 # =========================
 
 agro_next = None
-
-# =========================
-
-DEFAULT_EVENTS = {
-
-"나흐마":{
-"type":"fixed",
-"time":[(22,0)],
-"weekdays":[5,6]
-},
-
-"카이라":{
-"type":"hourly"
-},
-
-"아티쟁":{
-"type":"fixed",
-"time":[(21,0)],
-"weekdays":[1,3,5]
-},
-
-"슈고45":{
-"type":"minute",
-"minute":45
-},
-
-"슈고15":{
-"type":"minute",
-"minute":15
-},
-
-"아그로":{
-"type":"agro"
-}
-
-}
-
-def get_user(uid):
-
-    data["events"].setdefault(uid,{})
-    return data["events"][uid]
-
-def is_on(uid,key):
-
-    return get_user(uid).get(key,{}).get("on",False)
-
-def get_pre(uid,key):
-
-    return get_user(uid).get(key,{}).get("pre",[])
-
-# =========================
-# Embed
-# =========================
-
-def build_pre_embed(key,uid):
-
-    selected=get_pre(uid,key)
-
-    desc=EVENT_DESCRIPTION.get(key,"")
-
-    embed=discord.Embed(
-
-        title=f"⏱ {key}",
-        description=desc,
-        color=0x2b2d31
-
-    )
-
-    if key in ["슈고45","슈고15"]:
-
-        embed.add_field(
-
-            name="알림 방식",
-
-            value="정시 알림 (0분 전)",
-
-            inline=False
-
-        )
-
-    elif selected:
-
-        embed.add_field(
-
-            name="선택됨",
-
-            value=", ".join(
-                [f"{m}분 전" for m in sorted(selected)]
-            )
-
-        )
-
-    return embed
-
-# =========================
-# 사전 버튼
-# =========================
-
-class PreButton(discord.ui.Button):
-
-    def __init__(self,key,uid,m):
-
-        selected=m in get_pre(uid,key)
-
-        super().__init__(
-
-            label=f"{m}분",
-
-            style=(
-                discord.ButtonStyle.success
-                if selected
-                else discord.ButtonStyle.secondary
-            )
-
-        )
-
-        self.key=key
-        self.uid=uid
-        self.m=m
-
-    async def callback(self,i):
-
-        arr=get_user(self.uid)\
-            .setdefault(self.key,{})\
-            .setdefault("pre",[])
-
-        if self.m in arr:
-            arr.remove(self.m)
-        else:
-            arr.append(self.m)
-
-        save()
-
-        view=PreView(self.key,self.uid)
-        view.message=i.message
-
-        await i.response.edit_message(
-
-            embed=build_pre_embed(
-                self.key,self.uid
-            ),
-
-            view=view
-
-        )
-
-class PreView(discord.ui.View):
-
-    def __init__(self,key,uid):
-
-        super().__init__(timeout=30)
-
-        self.key=key
-        self.uid=uid
-        self.message=None
-
-        if key in ["슈고45","슈고15"]:
-            return
-
-        for m in [2,5,10,20,30,60]:
-
-            self.add_item(
-                PreButton(
-                    key,uid,m
-                )
-            )
-
-    async def on_timeout(self):
-
-        try:
-
-            if self.message:
-                await self.message.delete()
-
-        except:
-            pass
-
-# =========================
-# 토글 버튼
-# =========================
-
-class ToggleButton(discord.ui.Button):
-
-    def __init__(self,key,uid,row):
-
-        on=is_on(uid,key)
-
-        super().__init__(
-
-            label=key,
-
-            style=(
-                discord.ButtonStyle.success
-                if on
-                else discord.ButtonStyle.danger
-            ),
-
-            row=row
-
-        )
-
-        self.key=key
-        self.uid=uid
-
-    async def callback(self,i):
-
-        u=get_user(self.uid)
-
-        ev=u.setdefault(self.key,{})
-
-        new_state=not ev.get("on",False)
-
-        ev["on"]=new_state
-
-        if new_state:
-
-            default_pre=EVENT_DEFAULT_PRE.get(
-                self.key,
-                []
-            )
-
-            ev["pre"]=default_pre.copy()
-
-        save()
-
-        view=ControlView(self.uid)
-        view.message=i.message
-
-        await i.response.edit_message(
-            view=view
-        )
-
-        if new_state:
-
-            pre_view=PreView(
-                self.key,self.uid
-            )
-
-            msg=await i.followup.send(
-
-                embed=build_pre_embed(
-                    self.key,self.uid
-                ),
-
-                view=pre_view,
-                ephemeral=True
-
-            )
-
-            pre_view.message=msg
-
-# =========================
-# Control UI
-# =========================
-
-class ControlView(discord.ui.View):
-
-    def __init__(self,uid):
-
-        super().__init__(timeout=60)  # 🔥 60초
-
-        self.uid=uid
-        self.message=None
-
-        row=0
-        count=0
-
-        keys=list(DEFAULT_EVENTS.keys())
-
-        for k in keys:
-
-            self.add_item(
-                ToggleButton(
-                    k,uid,row
-                )
-            )
-
-            count+=1
-
-            if count%5==0:
-                row+=1
-
-    async def on_timeout(self):
-
-        try:
-            if self.message:
-                await self.message.delete()
-        except:
-            pass
-
-# =========================
-# 메인 UI
-# =========================
-
-class MainView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="📋 목록",
-        style=discord.ButtonStyle.primary
-    )
-    async def list_btn(self,i,b):
-
-        view=ControlView(
-            str(i.user.id)
-        )
-
-        await i.response.send_message(
-            view=view,
-            ephemeral=True
-        )
-
-        view.message = await i.original_response()
 
 # =========================
 # 아그로 명령
@@ -456,11 +160,10 @@ mode:str=""
         ephemeral=False
     )
 
-    # 🔥 30초 후 삭제
     await interaction.delete_original_response(delay=30)
 
 # =========================
-# LOOP
+# LOOP (모든 알림 핵심)
 # =========================
 
 @tasks.loop(seconds=60)
@@ -468,43 +171,89 @@ async def loop_check():
 
     global agro_next
 
-    if not agro_next:
-        return
-
     now=datetime.now(KST)
 
-    if now>=agro_next:
+    # =====================
+    # 카이라 (매시)
+    # =====================
 
-        ch=bot.get_channel(
-            CHANNEL_ID
+    if now.minute==0:
+
+        await send_dm_event(
+            "카이라",
+            "⏰ 카이라 등장!"
         )
 
-        if ch:
+    # =====================
+    # 슈고45
+    # =====================
 
-            mentions=[]
+    if now.minute==45:
 
-            for uid,udata in data["events"].items():
+        await send_dm_event(
+            "슈고45",
+            "⏰ 슈고 45분 등장!"
+        )
 
-                if udata.get("아그로",{}).get("on"):
+    # =====================
+    # 슈고15
+    # =====================
 
-                    mentions.append(
-                        f"<@{uid}>"
-                    )
+    if now.minute==15:
 
-            if mentions:
+        await send_dm_event(
+            "슈고15",
+            "⏰ 슈고 15분 등장!"
+        )
 
-                await ch.send(
-                    " ".join(mentions) +
-                    " ⚔️ 아그로!"
-                )
+    # =====================
+    # 나흐마
+    # 토(5),일(6) 22:00
+    # =====================
 
-        new_time=agro_next+timedelta(hours=12)
+    if now.weekday() in [5,6]:
 
-        agro_next=new_time
+        if now.hour==22 and now.minute==0:
 
-        data["agro"]["next"]=new_time.isoformat()
+            await send_dm_event(
+                "나흐마",
+                "⏰ 나흐마 등장!"
+            )
 
-        save()
+    # =====================
+    # 아티쟁
+    # 화(1),목(3),토(5)
+    # =====================
+
+    if now.weekday() in [1,3,5]:
+
+        if now.hour==21 and now.minute==0:
+
+            await send_dm_event(
+                "아티쟁",
+                "⏰ 아티쟁 등장!"
+            )
+
+    # =====================
+    # 아그로
+    # =====================
+
+    if agro_next:
+
+        if now>=agro_next:
+
+            await send_dm_event(
+                "아그로",
+                "⚔️ 아그로!"
+            )
+
+            new_time=agro_next+timedelta(hours=12)
+
+            agro_next=new_time
+
+            data["agro"]["next"]=new_time.isoformat()
+
+            save()
 
 # =========================
 # READY
