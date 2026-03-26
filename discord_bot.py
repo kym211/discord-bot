@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os, json
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -13,7 +13,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 DATA_FILE = "data.json"
 
@@ -36,13 +36,24 @@ def save():
 
 # =====================
 # 기본 이벤트
+# 타입:
+#   fixed  → 고정 시간 (weekdays 옵션)
+#   hourly → 매 시 정각
+#   agro   → /아그로 명령어로 시작점 지정, 12시간 간격 (런타임 상태)
 # =====================
 
 DEFAULT_EVENTS = {
-    "나흐마": {"time": [(22, 0)], "weekdays": [5, 6]},
-    "아티쟁": {"time": [(21, 0)], "weekdays": [1, 3, 5]},
-    "시공": {"time": [(20, 0), (23, 0), (2, 0)]},  # ✅ 추가
+    "나흐마":      {"type": "fixed",  "time": [(22, 0)],           "weekdays": [5, 6]},
+    "아그로":      {"type": "agro"},
+    "카이라":      {"type": "hourly"},
+    "아티쟁":      {"type": "fixed",  "time": [(21, 0)],           "weekdays": [1, 3, 5]},
+    "시공(20시)":  {"type": "fixed",  "time": [(20, 0)]},
+    "시공(23시)":  {"type": "fixed",  "time": [(23, 0)]},
+    "시공(02시)":  {"type": "fixed",  "time": [(2,  0)]},
 }
+
+# 아그로 런타임 상태: {uid: datetime (다음 알림 시각)}
+agro_next: dict[str, datetime] = {}
 
 # =====================
 # 유저 데이터
@@ -89,7 +100,7 @@ class PreButton(discord.ui.Button):
         super().__init__(
             label=f"{m}분",
             style=discord.ButtonStyle.success if m in get_pre(uid, key) else discord.ButtonStyle.secondary,
-            row=0 if m in [2,5,10] else 1
+            row=0 if m in [2, 5, 10] else 1
         )
         self.key = key
         self.uid = uid
@@ -117,7 +128,7 @@ class PreButton(discord.ui.Button):
 class PreView(discord.ui.View):
     def __init__(self, key, uid):
         super().__init__(timeout=120)
-        for m in [2,5,10,20,30,60]:
+        for m in [2, 5, 10, 20, 30, 60]:
             self.add_item(PreButton(key, uid, m))
 
 # =====================
@@ -127,9 +138,17 @@ class PreView(discord.ui.View):
 class ToggleButton(discord.ui.Button):
     def __init__(self, key, uid):
         on = is_on(uid, key)
+        ev = DEFAULT_EVENTS.get(key, {})
+
+        # 아그로는 ON 상태 표시를 다음 알림 시각으로
+        if ev.get("type") == "agro" and on and uid in agro_next:
+            next_t = agro_next[uid].strftime("%H:%M")
+            label = f"🟢 아그로 (다음: {next_t})"
+        else:
+            label = f"🟢 {key}" if on else f"🔴 {key}"
 
         super().__init__(
-            label=f"🟢 {key}" if on else f"🔴 {key}",
+            label=label,
             style=discord.ButtonStyle.success if on else discord.ButtonStyle.danger
         )
         self.key = key
@@ -138,7 +157,21 @@ class ToggleButton(discord.ui.Button):
     async def callback(self, i):
         u = get_user(self.uid)
         u.setdefault(self.key, {})
-        u[self.key]["on"] = not is_on(self.uid, self.key)
+        ev = DEFAULT_EVENTS.get(self.key, {})
+
+        currently_on = is_on(self.uid, self.key)
+
+        # 아그로 ON 시도 → 명령어 안내
+        if ev.get("type") == "agro" and not currently_on:
+            await i.response.send_message(
+                "ℹ️ 아그로는 `/아그로 HHMM` 명령어로 시작점을 지정해야 합니다.\n"
+                "예) `/아그로 0600` → 06:00부터 12시간 간격\n"
+                "예) `/아그로 1254` → 12:54부터 12시간 간격",
+                ephemeral=True
+            )
+            return
+
+        u[self.key]["on"] = not currently_on
         save()
 
         if u[self.key]["on"]:
@@ -148,6 +181,9 @@ class ToggleButton(discord.ui.Button):
                 ephemeral=True
             )
         else:
+            # 아그로 OFF → 다음 알림 제거
+            if ev.get("type") == "agro":
+                agro_next.pop(self.uid, None)
             await i.response.edit_message(view=ControlView(self.uid))
 
 # =====================
@@ -212,7 +248,7 @@ class ControlView(discord.ui.View):
                 self.add_item(ToggleButton(k, uid))
 
 # =====================
-# 커스텀 생성 (버그 수정)
+# 커스텀 생성
 # =====================
 
 class CustomNameModal(discord.ui.Modal, title="커스텀 이름"):
@@ -315,20 +351,64 @@ class MainView(discord.ui.View):
         )
 
 # =====================
-# 알림
+# /아그로 명령어
+#
+# 사용법:
+#   /아그로 0600       → 오늘 06:00부터 12시간 간격 (절대 시각)
+#   /아그로 0600 후에  → 지금으로부터 6시간 후부터 12시간 간격 (상대 시간)
+#   /아그로 0130 후에  → 지금으로부터 1시간 30분 후부터 12시간 간격
 # =====================
 
-async def send_alert(key, suffix=""):
-    for g in bot.guilds:
-        for m in g.members:
-            if m.bot:
-                continue
-            uid = str(m.id)
-            if is_on(uid, key):
-                try:
-                    await m.send(f"🔔 {key}{suffix}")
-                except:
-                    pass
+@bot.command(name="아그로")
+async def agro_cmd(ctx, time_str: str = "", mode: str = ""):
+    uid = str(ctx.author.id)
+
+    try:
+        t = time_str.zfill(4)
+        h, m = int(t[:2]), int(t[2:])
+        if not (0 <= h < 99 and 0 <= m < 60):
+            raise ValueError
+    except:
+        await ctx.reply(
+            "❌ 형식 오류.\n"
+            "• 절대 시각: `/아그로 0600` → 06:00부터\n"
+            "• 상대 시간: `/아그로 0130 후에` → 1시간 30분 후부터",
+            ephemeral=True
+        )
+        return
+
+    now = datetime.now(KST)
+
+    if mode.strip() == "후에":
+        # 상대 모드: h시간 m분 후
+        delta = timedelta(hours=h, minutes=m)
+        start = (now + delta).replace(second=0, microsecond=0)
+        mode_desc = f"지금으로부터 {h}시간 {m}분 후"
+    else:
+        # 절대 모드: 오늘 HH:MM (과거면 내일)
+        if not (0 <= h < 24):
+            await ctx.reply("❌ 절대 시각은 00~23시만 가능합니다.", ephemeral=True)
+            return
+        start = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if start <= now:
+            start += timedelta(hours=12)
+        mode_desc = f"오늘 {h:02d}:{m:02d}"
+
+    agro_next[uid] = start
+
+    u = get_user(uid)
+    u.setdefault("아그로", {})
+    u["아그로"]["on"] = True
+    save()
+
+    await ctx.reply(
+        f"✅ 아그로 알림 설정됨\n"
+        f"기준: **{mode_desc}**\n"
+        f"다음 알림: **{start.strftime('%H:%M')}** (이후 12시간 간격)\n\n"
+        "사전 알림도 설정하시겠어요?",
+        view=PreView("아그로", uid),
+        ephemeral=True
+    )
 
 # =====================
 # 스케줄
@@ -338,29 +418,114 @@ async def send_alert(key, suffix=""):
 async def loop():
     now = datetime.now(KST)
     h, m = now.hour, now.minute
+    weekday = now.weekday()  # 0=월 ... 6=일
 
-    for key, v in DEFAULT_EVENTS.items():
-        for eh, em in v["time"]:
-            event_total = eh * 60 + em
-            now_total = h * 60 + m
-            diff = event_total - now_total
-            if diff <= 0:
-                diff += 1440
+    for g in bot.guilds:
+        for member in g.members:
+            if member.bot:
+                continue
+            uid = str(member.id)
 
-            for g in bot.guilds:
-                for member in g.members:
-                    if member.bot:
+            for key, v in DEFAULT_EVENTS.items():
+                ev_type = v.get("type")
+
+                if not is_on(uid, key):
+                    continue
+
+                # ── fixed 타입 ──────────────────────────────
+                if ev_type == "fixed":
+                    wd = v.get("weekdays")
+                    if wd and weekday not in wd:
                         continue
-                    uid = str(member.id)
 
-                    if not is_on(uid, key):
+                    for eh, em in v["time"]:
+                        event_total = eh * 60 + em
+                        now_total   = h  * 60 + m
+                        diff = event_total - now_total
+                        if diff < 0:
+                            diff += 1440
+
+                        if diff == 0:
+                            try:
+                                await member.send(f"🔔 {key}")
+                            except:
+                                pass
+
+                        if diff in get_pre(uid, key):
+                            try:
+                                await member.send(f"⏱ {key} {diff}분 전")
+                            except:
+                                pass
+
+                # ── hourly 타입 (카이라) ────────────────────
+                elif ev_type == "hourly":
+                    if m == 0:
+                        try:
+                            await member.send(f"🔔 {key} ({h:02d}:00)")
+                        except:
+                            pass
+
+                    # 사전 알림: 매 시 정각 기준
+                    for pre_m in get_pre(uid, key):
+                        if m == (60 - pre_m) % 60:
+                            try:
+                                await member.send(f"⏱ {key} {pre_m}분 전")
+                            except:
+                                pass
+
+                # ── agro 타입 ───────────────────────────────
+                elif ev_type == "agro":
+                    if uid not in agro_next:
                         continue
+
+                    next_t = agro_next[uid]
+                    now_floor = now.replace(second=0, microsecond=0)
+
+                    # 사전 알림
+                    for pre_m in get_pre(uid, key):
+                        pre_target = next_t - timedelta(minutes=pre_m)
+                        pre_floor  = pre_target.replace(second=0, microsecond=0)
+                        if now_floor == pre_floor:
+                            try:
+                                await member.send(f"⏱ 아그로 {pre_m}분 전")
+                            except:
+                                pass
+
+                    # 정각 알림
+                    next_floor = next_t.replace(second=0, microsecond=0)
+                    if now_floor == next_floor:
+                        try:
+                            await member.send(f"🔔 아그로")
+                        except:
+                            pass
+                        # 12시간 뒤로 갱신
+                        agro_next[uid] = next_t + timedelta(hours=12)
+
+            # ── 커스텀 이벤트 ───────────────────────────────
+            for key, val in get_user(uid).items():
+                if key in DEFAULT_EVENTS:
+                    continue
+                if not val.get("on"):
+                    continue
+
+                for eh, em in val.get("time", []):
+                    event_total = eh * 60 + em
+                    now_total   = h  * 60 + m
+                    diff = event_total - now_total
+                    if diff < 0:
+                        diff += 1440
 
                     if diff == 0:
-                        await member.send(f"🔔 {key}")
+                        try:
+                            await member.send(f"🔔 {key}")
+                        except:
+                            pass
 
-                    if diff in get_pre(uid, key):
-                        await member.send(f"⏱ {key} {diff}분 전")
+                    if diff in val.get("pre", []):
+                        try:
+                            await member.send(f"⏱ {key} {diff}분 전")
+                        except:
+                            pass
 
 # =====================
 # 저장
