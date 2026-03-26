@@ -295,8 +295,8 @@ class ToggleButton(discord.ui.Button):
             view=view
         )
 
-        # 🔥 슈고는 팝업 없음
-        if new_state and self.key not in ["슈고45","슈고15"]:
+        # 🔥 슈고도 설명창은 뜬다
+        if new_state:
 
             pre_view=PreView(
                 self.key,self.uid
@@ -379,7 +379,7 @@ class MainView(discord.ui.View):
         )
 
 # =========================
-# 아그로 슬래시 명령
+# 아그로 명령
 # =========================
 
 @bot.tree.command(
