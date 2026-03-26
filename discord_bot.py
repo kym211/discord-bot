@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os, json
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -22,10 +22,7 @@ DATA_FILE = "data.json"
 
 def load():
     if not os.path.exists(DATA_FILE):
-        return {
-            "enabled": {},
-            "custom": {}
-        }
+        return {"events": {}}
     return json.load(open(DATA_FILE))
 
 data = load()
@@ -36,195 +33,210 @@ def save():
     dirty = True
 
 # =====================
-# 이벤트
+# 기본 이벤트
 # =====================
 
-EVENTS = [
-    "나흐마","아티쟁","아그로",
-    "시공8","시공23","시공2",
-    "카이라","슈고15","슈고45"
-]
-
-def is_enabled(uid, key):
-    return data["enabled"].get(uid, {}).get(key, False)
-
-# =====================
-# 캐시
-# =====================
-
-cache = {}
-
-def rebuild(guild):
-    global cache
-    cache = {k: [] for k in EVENTS}
-
-    for m in guild.members:
-        uid = str(m.id)
-        for k in EVENTS:
-            if is_enabled(uid, k):
-                cache[k].append(m)
+DEFAULT_EVENTS = {
+    "나흐마": {"time": [(22,0)], "weekdays":[5,6]},
+    "아티쟁": {"time": [(21,0)], "weekdays":[1,3,5]},
+    "카이라": {"time": "hourly"},
+    "슈고15": {"time": "15"},
+    "슈고45": {"time": "45"},
+}
 
 # =====================
-# 커스텀 추가
+# 유저 데이터
 # =====================
 
-class CustomAddModal(discord.ui.Modal, title="커스텀 알림 추가"):
-    time = discord.ui.TextInput(label="시간 (예: 1320)")
+def get_user(uid):
+    data["events"].setdefault(uid, {})
+    return data["events"][uid]
 
-    async def on_submit(self, interaction: discord.Interaction):
-        uid = str(interaction.user.id)
+def is_on(uid, key):
+    return get_user(uid).get(key, {}).get("on", False)
 
-        t = self.time.value.zfill(4)
-        h, m = int(t[:2]), int(t[2:])
-
-        data["custom"].setdefault(uid, [])
-        data["custom"][uid].append({"h": h, "m": m})
-
-        save()
-
-        await interaction.response.send_message(
-            f"✅ 추가됨: {h:02d}:{m:02d}",
-            ephemeral=True
-        )
+def get_pre(uid, key):
+    return get_user(uid).get(key, {}).get("pre", [])
 
 # =====================
-# 커스텀 삭제 UI
+# UI
 # =====================
 
-class CustomDeleteButton(discord.ui.Button):
-    def __init__(self, uid, idx, t):
-        super().__init__(label=f"{t['h']:02d}:{t['m']:02d}", style=discord.ButtonStyle.danger)
-        self.uid = uid
-        self.idx = idx
+class PreButton(discord.ui.Button):
+    def __init__(self, key, uid, m):
+        selected = m in get_pre(uid, key)
+        style = discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary
+        super().__init__(label=f"{m}분", style=style)
 
-    async def callback(self, i: discord.Interaction):
-        data["custom"][self.uid].pop(self.idx)
-        save()
+        self.key=key; self.uid=uid; self.m=m
 
-        await i.response.edit_message(view=CustomDeleteView(self.uid))
-
-class CustomDeleteView(discord.ui.View):
-    def __init__(self, uid):
-        super().__init__(timeout=120)
-        arr = data["custom"].get(uid, [])
-
-        if not arr:
-            self.add_item(discord.ui.Button(label="없음", disabled=True))
+    async def callback(self, i):
+        if not is_on(self.uid,self.key):
+            await i.response.send_message("❌ ON 먼저",ephemeral=True)
             return
 
-        for idx, t in enumerate(arr):
-            self.add_item(CustomDeleteButton(uid, idx, t))
+        u=get_user(self.uid)
+        u.setdefault(self.key,{}).setdefault("pre",[])
 
-# =====================
-# ON/OFF
-# =====================
+        arr=u[self.key]["pre"]
 
-class ToggleButton(discord.ui.Button):
-    def __init__(self, key, uid):
-        enabled = is_enabled(uid, key)
-        style = discord.ButtonStyle.success if enabled else discord.ButtonStyle.danger
-        super().__init__(label=f"{key} {'ON' if enabled else 'OFF'}", style=style)
-
-        self.key = key
-        self.uid = uid
-
-    async def callback(self, i: discord.Interaction):
-        data["enabled"].setdefault(self.uid, {})
-        data["enabled"][self.uid][self.key] = not is_enabled(self.uid, self.key)
+        if self.m in arr: arr.remove(self.m)
+        else: arr.append(self.m)
 
         save()
-        rebuild(i.guild)
 
-        await i.response.edit_message(view=ControlView(self.uid))
+        await i.response.edit_message(view=PreView(self.key,self.uid))
+
+class PreView(discord.ui.View):
+    def __init__(self,key,uid):
+        super().__init__(timeout=120)
+        for m in [2,5,10,20,30,60]:
+            self.add_item(PreButton(key,uid,m))
+
+class ToggleButton(discord.ui.Button):
+    def __init__(self,key,uid):
+        style=discord.ButtonStyle.success if is_on(uid,key) else discord.ButtonStyle.danger
+        super().__init__(label=f"{key}",style=style)
+
+        self.key=key; self.uid=uid
+
+    async def callback(self,i):
+        u=get_user(self.uid)
+        u.setdefault(self.key,{})
+
+        u[self.key]["on"]=not is_on(self.uid,self.key)
+
+        save()
+
+        # 🔥 ON하면 바로 설정창
+        if u[self.key]["on"]:
+            await i.response.send_message(
+                f"{self.key} 사전알림 설정",
+                view=PreView(self.key,self.uid),
+                ephemeral=True
+            )
+        else:
+            await i.response.edit_message(view=ControlView(self.uid))
 
 class ControlView(discord.ui.View):
-    def __init__(self, uid):
+    def __init__(self,uid):
         super().__init__(timeout=120)
-        for k in EVENTS:
-            self.add_item(ToggleButton(k, uid))
 
-# =====================
-# 메인 UI
-# =====================
+        for k in list(DEFAULT_EVENTS.keys())+list(get_user(uid).keys()):
+            self.add_item(ToggleButton(k,uid))
+
+class CustomNameModal(discord.ui.Modal,title="커스텀 이름"):
+    name=discord.ui.TextInput(label="이름")
+
+    async def on_submit(self,i):
+        uid=str(i.user.id)
+        name=self.name.value
+
+        u=get_user(uid)
+        u[name]={"on":True,"time":[],"pre":[]}
+
+        save()
+
+        await i.response.send_modal(CustomTimeModal(name))
+
+class CustomTimeModal(discord.ui.Modal,title="시간 설정"):
+    time=discord.ui.TextInput(label="예:0930")
+
+    def __init__(self,name):
+        super().__init__()
+        self.name=name
+
+    async def on_submit(self,i):
+        uid=str(i.user.id)
+        t=self.time.value.zfill(4)
+        h,m=int(t[:2]),int(t[2:])
+
+        get_user(uid)[self.name]["time"]=[(h,m)]
+
+        save()
+
+        await i.response.send_message(
+            "사전알림 설정",
+            view=PreView(self.name,uid),
+            ephemeral=True
+        )
 
 class MainView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="⚙️ ON/OFF", custom_id="main_toggle")
-    async def toggle(self, i, b):
-        await i.response.send_message(view=ControlView(str(i.user.id)), ephemeral=True)
-
-    @discord.ui.button(label="➕ 커스텀 추가", custom_id="custom_add")
-    async def add(self, i, b):
-        await i.response.send_modal(CustomAddModal())
-
-    @discord.ui.button(label="🗑 커스텀 삭제", custom_id="custom_del")
-    async def delete(self, i, b):
+    @discord.ui.button(label="⚙️ ON/OFF",custom_id="toggle")
+    async def t(self,i,b):
         await i.response.send_message(
-            view=CustomDeleteView(str(i.user.id)),
+            view=ControlView(str(i.user.id)),
             ephemeral=True
         )
+
+    @discord.ui.button(label="➕ 커스텀",custom_id="custom")
+    async def c(self,i,b):
+        await i.response.send_modal(CustomNameModal())
 
 # =====================
 # 알림
 # =====================
 
-async def send_event(key):
-    users = cache.get(key, [])
-    if users:
-        await bot.get_channel(CHANNEL_ID).send(
-            f"{' '.join([u.mention for u in users])}\n🔔 {key}"
-        )
-
-async def send_custom():
-    now = datetime.now(KST)
-
-    for uid, arr in data["custom"].items():
-        for t in arr:
-            if now.hour == t["h"] and now.minute == t["m"]:
-                user = bot.get_user(int(uid))
-                if user:
-                    try:
-                        await user.send(f"🔔 개인 알림 {t['h']:02d}:{t['m']:02d}")
-                    except:
-                        pass
+async def send(key):
+    for g in bot.guilds:
+        for m in g.members:
+            uid=str(m.id)
+            if is_on(uid,key):
+                try:
+                    await m.send(f"🔔 {key}")
+                except: pass
 
 # =====================
 # 스케줄
 # =====================
 
 @tasks.loop(minutes=1)
-async def scheduler():
-    now = datetime.now(KST)
+async def loop():
+    now=datetime.now(KST)
 
-    if now.hour == 22 and now.weekday() in [5,6]:
-        await send_event("나흐마")
+    # 기본 이벤트
+    for k,v in DEFAULT_EVENTS.items():
 
-    if now.hour == 21 and now.weekday() in [1,3,5]:
-        await send_event("아티쟁")
+        if v["time"]=="hourly" and now.minute==0:
+            await send(k)
 
-    if now.minute == 0:
-        await send_event("카이라")
+        elif v["time"]=="15" and now.minute==15:
+            await send(k)
 
-    if now.minute == 15:
-        await send_event("슈고15")
+        elif v["time"]=="45" and now.minute==45:
+            await send(k)
 
-    if now.minute == 45:
-        await send_event("슈고45")
+        else:
+            for h,m in v["time"]:
+                if now.hour==h and now.minute==m:
+                    if not v.get("weekdays") or now.weekday() in v["weekdays"]:
+                        await send(k)
 
-    await send_custom()
+    # 커스텀
+    for uid,u in data["events"].items():
+        for k,v in u.items():
+            if v.get("time"):
+                for h,m in v["time"]:
+                    if now.hour==h and now.minute==m:
+                        if v.get("on"):
+                            user=bot.get_user(int(uid))
+                            if user:
+                                try: await user.send(f"🔔 {k}")
+                                except: pass
 
 # =====================
 # 저장
 # =====================
 
 @tasks.loop(seconds=10)
-async def autosave():
+async def save_loop():
     global dirty
     if dirty:
-        json.dump(data, open(DATA_FILE,"w"))
-        dirty = False
+        json.dump(data,open(DATA_FILE,"w"))
+        dirty=False
 
 # =====================
 # 실행
@@ -233,16 +245,14 @@ async def autosave():
 @bot.event
 async def on_ready():
     if not hasattr(bot,"ready"):
-        ch = bot.get_channel(CHANNEL_ID)
-        await ch.send("🔔 알림 설정", view=MainView())
+        ch=bot.get_channel(CHANNEL_ID)
+        await ch.send("🔔 알림 설정",view=MainView())
 
-        rebuild(bot.guilds[0])
+        loop.start()
+        save_loop.start()
 
-        scheduler.start()
-        autosave.start()
+        bot.ready=True
 
-        bot.ready = True
-
-    print("🔥 완전체 최종 실행")
+    print("🔥 완전 최종 구조 실행")
 
 bot.run(BOT_TOKEN)
