@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import os, json
 from datetime import datetime, timedelta
 import pytz
@@ -142,12 +143,13 @@ def build_pre_embed(uid: str, key: str) -> discord.Embed:
     pres = get_pre(uid, key)
     pre_str = ", ".join(f"{p}분 전" if p > 0 else "즉시" for p in pres)
     on = is_on(uid, key)
+    extra = "\n\n💡 처치 후 `/아그로 1245` 입력 (12시간 45분 후 등장)" if key == "아그로" else ""
     embed = discord.Embed(
         title=f"{emoji} {key} 알림 설정",
         description=(
             f"**상태:** {'🟢 ON' if on else '⚫ OFF'}\n"
             f"**현재 알림 시간:** {pre_str}\n\n"
-            "원하는 시간을 선택하세요. (복수 선택 가능)"
+            f"원하는 시간을 선택하세요. (복수 선택 가능){extra}"
         ),
         color=0x5865F2
     )
@@ -166,7 +168,7 @@ class MainView(discord.ui.View):
 class OpenListButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            label="날 목록",
+            label="목록",
             emoji="🔔",
             style=discord.ButtonStyle.primary,
             custom_id="main_open"
@@ -226,8 +228,6 @@ class PreSelectView(discord.ui.View):
         for minutes in PRE_OPTIONS:
             self.add_item(PreTimeButton(uid=uid, key=key, minutes=minutes))
         self.add_item(EventOnOffButton(uid=uid, key=key))
-        if key == "아그로":
-            self.add_item(AgroRegisterButton(uid=uid))
         self.add_item(BackButton(uid=uid))
 
 
@@ -456,8 +456,47 @@ async def on_ready():
     except Exception as e:
         print("아그로 로드 실패:", e)
 
-    # 슬래시 커맨드 초기화 (이전에 등록된 /알림 등 제거)
-    bot.tree.clear_commands(guild=None)
+# =========================
+# 슬래시 커맨드: /아그로
+# =========================
+
+@bot.tree.command(name="아그로", description="아그로 처치 후 다음 등장까지 남은 시간 입력 (예: 1245 → 12시간 45분 후)")
+@app_commands.describe(time="시간분 형식 입력 (예: 1245, 030, 100)")
+async def cmd_agro(interaction: discord.Interaction, time: str):
+    global agro_next
+
+    # 입력 파싱: 마지막 2자리 = 분, 나머지 = 시간
+    time = time.strip().zfill(3)  # 최소 3자리 보장
+    try:
+        minutes_part = int(time[-2:])
+        hours_part = int(time[:-2]) if len(time) > 2 else 0
+        if minutes_part >= 60:
+            raise ValueError
+    except ValueError:
+        await interaction.response.send_message(
+            "⚠️ 형식이 올바르지 않습니다.\n예) `/아그로 1245` → 12시간 45분 후\n예) `/아그로 030` → 30분 후",
+            ephemeral=True
+        )
+        return
+
+    now = datetime.now(KST)
+    agro_next = now + timedelta(hours=hours_part, minutes=minutes_part)
+    data["agro"]["next"] = agro_next.isoformat()
+    save()
+
+    uid = str(interaction.user.id)
+    pres = get_pre(uid, "아그로")
+    pre_str = ", ".join(f"{p}분 전" if p > 0 else "즉시" for p in pres)
+
+    await interaction.response.send_message(
+        f"👹 아그로 처치 등록!\n"
+        f"다음 등장: **{agro_next.strftime('%m/%d %H:%M')}** "
+        f"({hours_part}시간 {minutes_part}분 후)\n"
+        f"알림 설정: {pre_str}",
+        ephemeral=False
+    )
+
+    # 슬래시 커맨드 동기화 (/아그로 등록)
     await bot.tree.sync()
 
     # 재시작 후 영구 View 복원
