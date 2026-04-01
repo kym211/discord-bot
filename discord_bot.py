@@ -20,18 +20,31 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 DATA_FILE = "data.json"
 
 # =========================
-# 이벤트 및 알림 기본값
+# 이벤트 및 알림 기본값 (요청사항 반영)
 # =========================
+
 EVENT_DEFAULT_PRE = {
-    "카이라": [2], "슈고15": [0], "슈고45": [0],
-    "아그로": [30], "아티쟁": [120], "나흐마": [30],
-    "시공_20시": [10], "시공_23시": [10], "시공_02시": 10]
+    "카이라": [2],
+    "슈고15": [0],
+    "슈고45": [0],
+    "아그로": [30],   # 기본 30분
+    "아티쟁": [120],  # 기본 120분(2시간)
+    "나흐마": [30],   # 기본 30분
+    "시공_20시": [10], # 기본 10분으로 변경
+    "시공_23시": [10], # 기본 10분으로 변경
+    "시공_02시": [10]  # 기본 10분으로 변경
 }
 
 EVENT_DESCRIPTION = {
-    "카이라": "매 시각 정각", "슈고15": "매 시각 15분", "슈고45": "매 시각 45분",
-    "아그로": "처치 후 12시간 간격", "아티쟁": "화, 목, 토 오후 9시 5분", "나흐마": "토, 일 오후 10시",
-    "시공_20시": "매일 저녁 8시 (20:00)", "시공_23시": "매일 밤 11시 (23:00)", "시공_02시": "매일 새벽 2시 (02:00)"
+    "카이라": "매 시각 정각",
+    "슈고15": "매 시각 15분",
+    "슈고45": "매 시각 45분",
+    "아그로": "처치 후 12시간 간격",
+    "아티쟁": "화, 목, 토 오후 9시 5분",
+    "나흐마": "토, 일 오후 10시",
+    "시공_20시": "매일 저녁 8시 (20:00)",
+    "시공_23시": "매일 밤 11시 (23:00)",
+    "시공_02시": "매일 새벽 2시 (02:00)"
 }
 
 EVENT_EMOJI = {
@@ -42,8 +55,9 @@ EVENT_EMOJI = {
 PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
 
 # =========================
-# 데이터 관리
+# 데이터 관리 함수
 # =========================
+
 def load():
     if not os.path.exists(DATA_FILE): return {"events": {}, "agro": {}}
     with open(DATA_FILE, encoding="utf-8") as f: return json.load(f)
@@ -51,31 +65,46 @@ def load():
 data = load()
 
 def save():
-    with open(DATA_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_user_data(uid):
     data["events"].setdefault(str(uid), {})
     return data["events"][str(uid)]
 
-def is_on(uid, key): return get_user_data(uid).get(key, {}).get("on", False)
+def is_on(uid, key):
+    return get_user_data(uid).get(key, {}).get("on", False)
 
 def get_pre(uid, key):
     user_pre = get_user_data(uid).get(key, {}).get("pre", None)
-    return user_pre if user_pre is not None else EVENT_DEFAULT_PRE.get(key, [0])
+    if user_pre is None:
+        return EVENT_DEFAULT_PRE.get(key, [0])
+    return user_pre
 
 def format_pre_time(m):
     if m == 0: return "즉시"
-    if m >= 60: return f"{m//60}시간 {f'{m%60}분 ' if m%60 else ''}전"
+    if m >= 60:
+        h, rem = divmod(m, 60)
+        return f"{h}시간 {f'{rem}분 ' if rem else ''}전"
     return f"{m}분 전"
 
 # =========================
-# UI 구성
+# UI 구성 (Embed & Views)
 # =========================
 
 def build_main_embed():
-    embed = discord.Embed(title="🔔 알림 설정 센터", description="이벤트 발생 전 DM으로 알림을 보내드립니다.", color=0x5865F2)
-    guide = "1️⃣ **[목록보기]** 클릭\n2️⃣ **콘텐츠** 선택\n3️⃣ **[알림 켜기]** 클릭 시 활성화!"
+    embed = discord.Embed(title="🔔 알림 설정 센터", description="이벤트 전 DM으로 알림을 보내드립니다.", color=0x5865F2)
+    guide = (
+        "1️⃣ 아래 **[목록보기 / 설정하기]** 버튼을 클릭하세요.\n"
+        "2️⃣ 알림을 원하는 **콘텐츠 버튼**을 누르세요.\n"
+        "3️⃣ **[알림 켜기]** 버튼을 누르면 활성화 됩니다! (초록색 확인)\n"
+        "4️⃣ 원하는 **알림 시간**도 여러 개 선택할 수 있습니다."
+    )
     embed.add_field(name="📖 사용 방법", value=guide, inline=False)
+    
+    if "agro" in data and "next" in data["agro"]:
+        nt = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
+        embed.set_footer(text=f"👹 아그로 다음 예정: {nt.strftime('%m/%d %H:%M')}")
     return embed
 
 def build_my_embed(uid: str):
@@ -91,19 +120,21 @@ def build_my_embed(uid: str):
 def build_pre_embed(uid: str, key: str):
     on = is_on(uid, key)
     pres = ", ".join(format_pre_time(p) for p in get_pre(uid, key))
-    return discord.Embed(title=f"{EVENT_EMOJI.get(key)} {key} 설정", 
-                         description=f"**상태:** {'🟢 켜짐' if on else '⚫ 꺼짐'}\n**시간:** {pres}", color=0x5865F2)
+    return discord.Embed(
+        title=f"{EVENT_EMOJI.get(key)} {key} 세부 설정",
+        description=f"**현재 상태:** {'🟢 알림 켜짐' if on else '⚫ 알림 꺼짐'}\n**설정된 시간:** {pres}",
+        color=0x5865F2
+    )
 
 class MainView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="목록보기 / 설정하기", emoji="🔔", style=discord.ButtonStyle.primary, custom_id="main_open")
     async def open_list(self, interaction: discord.Interaction, button: discord.ui.Button):
-        uid = str(interaction.user.id)
-        await interaction.response.send_message(embed=build_my_embed(uid), view=MyListView(uid), ephemeral=True)
+        await interaction.response.send_message(embed=build_my_embed(interaction.user.id), view=MyListView(str(interaction.user.id)), ephemeral=True)
 
 class MyListView(discord.ui.View):
     def __init__(self, uid: str):
-        super().__init__(timeout=60)
+        super().__init__(timeout=180)
         self.uid = uid
         for key in EVENT_DESCRIPTION:
             style = discord.ButtonStyle.success if is_on(uid, key) else discord.ButtonStyle.secondary
@@ -118,7 +149,7 @@ class EventSelectButton(discord.ui.Button):
 
 class PreSelectView(discord.ui.View):
     def __init__(self, uid, key):
-        super().__init__(timeout=60)
+        super().__init__(timeout=180)
         self.uid, self.key = uid, key
         for m in PRE_OPTIONS: self.add_item(PreTimeButton(uid, key, m))
         self.add_item(EventOnOffButton(uid, key))
@@ -156,15 +187,71 @@ class BackButton(discord.ui.Button):
         await interaction.response.edit_message(embed=build_my_embed(interaction.user.id), view=MyListView(str(interaction.user.id)))
 
 # =========================
-# 알림 로직 및 기타 커맨드 (생략 - 기존과 동일하게 유지)
+# 알림 로직 (Loop)
+# =========================
+
+sent_cache = {}
+agro_next = None
+
+@tasks.loop(seconds=30)
+async def loop_check():
+    global agro_next
+    try:
+        now = datetime.now(KST)
+        weekday = now.weekday()
+        async def check_and_send(key, msg, target_dt: datetime):
+            for uid in list(data["events"].keys()):
+                if not is_on(uid, key): continue
+                for pre in get_pre(uid, key):
+                    send_at = target_dt - timedelta(minutes=pre)
+                    if 0 <= (now - send_at).total_seconds() < 30:
+                        ckey = f"{key}_{uid}_{pre}_{send_at.strftime('%Y%m%d%H%M')}"
+                        if ckey not in sent_cache:
+                            sent_cache[ckey] = True
+                            notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
+                            user = bot.get_user(int(uid)) or await bot.fetch_user(int(uid))
+                            await user.send(notice)
+
+        # 시간별 체크 (아티쟁 21:05, 나흐마 22:00, 시공 등)
+        if weekday in [1, 3, 5]: await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", now.replace(hour=21, minute=5, second=0))
+        if weekday in [5, 6]: await check_and_send("나흐마", "🔥 나흐마 등장!", now.replace(hour=22, minute=0, second=0))
+        for h in [20, 23, 2]:
+            target = now.replace(hour=h, minute=0, second=0)
+            if h == 2 and now.hour > 2: target += timedelta(days=1)
+            await check_and_send(f"시공_{h:02d}시", f"🌌 시공 등장! ({h}시)", target)
+        
+        # 정기 (카이라/슈고)
+        next_kaira = (now + timedelta(hours=1)).replace(minute=0, second=0) if now.minute > 0 else now.replace(minute=0, second=0)
+        await check_and_send("카이라", "⏰ 카이라 등장!", next_kaira)
+        for m in [15, 45]:
+            target = now.replace(minute=m, second=0)
+            if now.minute > m: target += timedelta(hours=1)
+            await check_and_send(f"슈고{m}", f"🛡️ 슈고 등장! ({m}분)", target)
+
+        if agro_next:
+            await check_and_send("아그로", "👹 아그로 등장!", agro_next)
+            if now >= agro_next:
+                agro_next += timedelta(hours=12); data["agro"]["next"] = agro_next.isoformat(); save()
+    except Exception as e: print("루프 에러:", e)
+
+# =========================
+# 초기화
 # =========================
 
 @bot.event
 async def on_ready():
+    global agro_next
+    if "agro" in data and "next" in data["agro"]:
+        agro_next = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
     bot.add_view(MainView())
+    if not loop_check.is_running(): loop_check.start()
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send(embed=build_main_embed(), view=MainView())
-    print(f"Logged in as {bot.user}")
+        async for msg in channel.history(limit=5):
+            if msg.author == bot.user and msg.components:
+                await msg.edit(embed=build_main_embed(), view=MainView()); break
+        else: await channel.send(embed=build_main_embed(), view=MainView())
+    await bot.tree.sync()
+    print(f"봇 로그인 완료: {bot.user}")
 
 bot.run(BOT_TOKEN)
