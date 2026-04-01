@@ -22,16 +22,16 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 DATA_FILE = "data.json"
 
 # =========================
-# 이벤트 및 알림 기본값 정의 (요청사항 반영)
+# 이벤트 및 알림 기본값 정의
 # =========================
 
 EVENT_DEFAULT_PRE = {
     "카이라": [2],
     "슈고15": [0],
     "슈고45": [0],
-    "아그로": [30],   # 10분 -> 30분 변경
-    "아티쟁": [120],  # 30분 -> 120분(2시간) 변경
-    "나흐마": [30],   # 10분 -> 30분 변경
+    "아그로": [30],   # 기본 30분 전
+    "아티쟁": [120],  # 기본 120분(2시간) 전
+    "나흐마": [30],   # 기본 30분 전
     "시공_20시": [5],
     "시공_23시": [5],
     "시공_02시": [5]
@@ -115,16 +115,32 @@ async def send_dm_user(uid, text):
         print(f"DM 실패 → {uid} : {e}")
 
 # =========================
-# UI 구성
+# UI 구성 (Embed & Views)
 # =========================
 
 def build_main_embed() -> discord.Embed:
-    embed = discord.Embed(title="🔔 알림 설정 센터", color=0x5865F2)
+    embed = discord.Embed(
+        title="🔔 알림 설정 센터", 
+        description="이벤트 발생 전 DM으로 알림을 보내드립니다.",
+        color=0x5865F2
+    )
+    
+    # 사용법 추가
+    guide_text = (
+        "1️⃣ 아래 **[목록보기 / 설정하기]** 버튼을 클릭하세요.\n"
+        "2️⃣ 알림을 원하는 **콘텐츠 버튼**을 누르세요.\n"
+        "3️⃣ **[알림 켜기]** 버튼을 누르면 활성화 됩니다! (초록색 확인)\n"
+        "4️⃣ 원하는 **사전 알림 시간**도 복수 선택 가능합니다."
+    )
+    embed.add_field(name="📖 사용 방법", value=guide_text, inline=False)
+
     lines = [f"{EVENT_EMOJI.get(k)} **{k}** — {d}" for k, d in EVENT_DESCRIPTION.items()]
-    embed.add_field(name="지원 이벤트", value="\n".join(lines), inline=False)
+    embed.add_field(name="📅 지원 이벤트 목록", value="\n".join(lines), inline=False)
+    
     if "agro" in data and "next" in data["agro"]:
         nt = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
-        embed.set_footer(text=f"👹 아그로 다음: {nt.strftime('%m/%d %H:%M')}")
+        embed.set_footer(text=f"👹 아그로 다음 등장 예상: {nt.strftime('%m/%d %H:%M')}")
+    
     return embed
 
 def build_my_embed(uid: str) -> discord.Embed:
@@ -146,7 +162,12 @@ def build_pre_embed(uid: str, key: str) -> discord.Embed:
     on = is_on(uid, key)
     embed = discord.Embed(
         title=f"{emoji} {key} 세부 설정",
-        description=f"**상태:** {'🟢 켜짐' if on else '⚫ 꺼짐'}\n**시간:** {pre_str}",
+        description=(
+            f"**현재 상태:** {'🟢 알림 켜짐' if on else '⚫ 알림 꺼짐'}\n"
+            f"**설정된 시간:** {pre_str}\n\n"
+            "**[알림 켜기]** 버튼을 눌러 활성화 상태를 변경하고,\n"
+            "원하는 시간 버튼을 눌러 알림 시점을 정하세요."
+        ),
         color=0x5865F2
     )
     return embed
@@ -156,14 +177,19 @@ class MainView(discord.ui.View):
         super().__init__(timeout=None)
     @discord.ui.button(label="목록보기 / 설정하기", emoji="🔔", style=discord.ButtonStyle.primary, custom_id="main_open")
     async def open_list(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=build_my_embed(interaction.user.id), view=MyListView(str(interaction.user.id)), ephemeral=True)
+        uid = str(interaction.user.id)
+        await interaction.response.send_message(
+            embed=build_my_embed(uid),
+            view=MyListView(uid),
+            ephemeral=True
+        )
 
 class MyListView(discord.ui.View):
     def __init__(self, uid: str):
         super().__init__(timeout=180)
         self.uid = uid
         for key in EVENT_DESCRIPTION:
-            # 알림이 켜져있으면 초록색 버튼으로 표시
+            # 활성화 여부에 따른 버튼 색상 (ON이면 초록색)
             style = discord.ButtonStyle.success if is_on(uid, key) else discord.ButtonStyle.secondary
             self.add_item(EventSelectButton(uid=uid, key=key, style=style))
 
@@ -172,7 +198,10 @@ class EventSelectButton(discord.ui.Button):
         super().__init__(label=key, emoji=EVENT_EMOJI.get(key, "•"), style=style)
         self.uid, self.key = uid, key
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(embed=build_pre_embed(self.uid, self.key), view=PreSelectView(self.uid, self.key))
+        await interaction.response.edit_message(
+            embed=build_pre_embed(self.uid, self.key),
+            view=PreSelectView(self.uid, self.key)
+        )
 
 class PreSelectView(discord.ui.View):
     def __init__(self, uid: str, key: str):
@@ -202,7 +231,11 @@ class PreTimeButton(discord.ui.Button):
 class EventOnOffButton(discord.ui.Button):
     def __init__(self, uid: str, key: str):
         on = is_on(uid, key)
-        super().__init__(label=f"알림 {'끄기' if on else '켜기'}", style=discord.ButtonStyle.danger if on else discord.ButtonStyle.primary, row=3)
+        super().__init__(
+            label=f"알림 {'끄기' if on else '켜기'}", 
+            style=discord.ButtonStyle.danger if on else discord.ButtonStyle.primary, 
+            row=3
+        )
         self.uid, self.key = uid, key
     async def callback(self, interaction: discord.Interaction):
         u_data = get_user_data(self.uid).setdefault(self.key, {})
@@ -242,23 +275,25 @@ async def loop_check():
                             notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
                             await send_dm_user(uid, notice)
 
-        # 이벤트 시간 체크
-        if weekday in [1, 3, 5]: # 아티쟁 (화/목/토 21:05)
+        # 타임 체크 (아티쟁 21:05, 나흐마 22:00, 시공 등)
+        if weekday in [1, 3, 5]: 
             await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", now.replace(hour=21, minute=5, second=0))
-        if weekday in [5, 6]: # 나흐마 (토/일 22:00)
+        if weekday in [5, 6]:
             await check_and_send("나흐마", "🔥 나흐마 등장!", now.replace(hour=22, minute=0, second=0))
-        for h in [20, 23, 2]: # 시공
+        for h in [20, 23, 2]:
             target = now.replace(hour=h, minute=0, second=0)
             if h == 2 and now.hour > 2: target += timedelta(days=1)
             await check_and_send(f"시공_{h:02d}시", f"🌌 시공 등장! ({h}시)", target)
         
-        # 카이라, 슈고, 아그로 로직 동일... (생략된 부분 기존과 같음)
+        # 카이라, 슈고
         next_kaira = (now + timedelta(hours=1)).replace(minute=0, second=0) if now.minute > 0 else now.replace(minute=0, second=0)
         await check_and_send("카이라", "⏰ 카이라 등장!", next_kaira)
         for m in [15, 45]:
             target = now.replace(minute=m, second=0)
             if now.minute > m: target += timedelta(hours=1)
             await check_and_send(f"슈고{m}", f"🛡️ 슈고 등장! ({m}분)", target)
+
+        # 아그로
         if agro_next:
             await check_and_send("아그로", "👹 아그로 등장!", agro_next)
             if now >= agro_next:
@@ -270,7 +305,7 @@ async def loop_check():
 # 실행 및 초기화
 # =========================
 
-@bot.tree.command(name="아그로", description="아그로 시간 등록")
+@bot.tree.command(name="아그로", description="아그로 시간 등록 (예: 1245 -> 12시간 45분 후)")
 async def cmd_agro(interaction: discord.Interaction, time: str):
     global agro_next
     try:
@@ -279,7 +314,7 @@ async def cmd_agro(interaction: discord.Interaction, time: str):
         if mm >= 60: raise ValueError
         agro_next = datetime.now(KST) + timedelta(hours=hh, minutes=mm)
         data["agro"]["next"] = agro_next.isoformat(); save()
-        await interaction.response.send_message(f"👹 아그로 등록: **{agro_next.strftime('%H:%M')}**")
+        await interaction.response.send_message(f"👹 아그로 등록: **{agro_next.strftime('%m/%d %H:%M')}**")
     except: await interaction.response.send_message("형식 오류!", ephemeral=True)
 
 @bot.event
