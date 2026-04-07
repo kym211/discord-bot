@@ -100,16 +100,6 @@ def format_pre_time(m):
         return f"{h}시간 {f'{rem}분 ' if rem else ''}전"
     return f"{m}분 전"
 
-def restore_all_on(uid):
-    """유저의 모든 이벤트 알림을 켜기 (설정된 pre 유지, 없으면 기본값 세팅)"""
-    u_events = get_user_data(uid)
-    for key in EVENT_DESCRIPTION:
-        entry = u_events.setdefault(key, {})
-        entry["on"] = True
-        if "pre" not in entry:
-            entry["pre"] = list(EVENT_DEFAULT_PRE.get(key, [0]))
-    save()
-
 # =========================
 # DM 전송
 # =========================
@@ -139,7 +129,7 @@ def build_main_embed() -> discord.Embed:
         "2️⃣ 알림을 원하는 **콘텐츠 버튼**을 누르세요.\n"
         "3️⃣ **[알림 켜기]** 버튼을 누르면 활성화 됩니다! (초록색 확인)\n"
         "4️⃣ 원하는 **사전 알림 시간**도 복수 선택 가능합니다.\n"
-        "5️⃣ 봇 재시작 후 **[이전 설정 복구]** 버튼으로 한 번에 모두 재활성화!"
+        "5️⃣ 봇이 업데이트되어도 설정은 자동으로 유지됩니다!"
     )
     embed.add_field(name="📖 사용 방법", value=guide_text, inline=False)
     lines = [f"{EVENT_EMOJI.get(k)} **{k}** — {d}" for k, d in EVENT_DESCRIPTION.items()]
@@ -193,29 +183,6 @@ class MainView(discord.ui.View):
         uid = str(interaction.user.id)
         view = MyListView(uid)
         await interaction.response.send_message(
-            embed=build_my_embed(uid),
-            view=view,
-            ephemeral=True
-        )
-        view.message = await interaction.original_response()
-
-    @discord.ui.button(label="이전 설정 복구", emoji="🔄", style=discord.ButtonStyle.success, custom_id="main_restore")
-    async def restore_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
-        uid = str(interaction.user.id)
-        u_events = data["events"].get(uid, {})
-
-        if not u_events:
-            await interaction.response.send_message(
-                "⚠️ 저장된 설정이 없습니다. 먼저 알림을 설정해주세요.",
-                ephemeral=True
-            )
-            return
-
-        restore_all_on(uid)
-
-        view = MyListView(uid)
-        await interaction.response.send_message(
-            content="✅ 이전에 설정하신 모든 알림이 복구되었습니다!",
             embed=build_my_embed(uid),
             view=view,
             ephemeral=True
@@ -337,9 +304,7 @@ def next_even_hour_target(now: datetime) -> datetime:
     """다음 짝수 시각 정각 datetime 반환"""
     h = now.hour
     if now.minute == 0 and now.second == 0 and h % 2 == 0:
-        # 정확히 짝수 정각이면 현재 시각
         return now.replace(second=0, microsecond=0)
-    # 다음 짝수 시각
     next_h = h + 1 if h % 2 == 1 else h + 2
     target = now.replace(minute=0, second=0, microsecond=0)
     if next_h >= 24:
@@ -372,7 +337,6 @@ def next_kaira_target(now: datetime) -> datetime | None:
     if now.minute == 0 and now.second == 0 and 6 <= h <= 23:
         return now.replace(second=0, microsecond=0)
     next_h = h + 1 if now.minute > 0 else h
-    # 범위 벗어나면 None
     if not (6 <= next_h <= 23):
         return None
     return now.replace(hour=next_h, minute=0, second=0, microsecond=0)
