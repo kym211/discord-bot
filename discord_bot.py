@@ -19,7 +19,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-DATA_FILE = "data.json"
+DATA_FILE = "/data/data.json"
 
 # =========================
 # 이벤트 및 알림 기본값 정의
