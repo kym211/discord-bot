@@ -32,17 +32,17 @@ EVENT_DEFAULT_PRE = {
     "아그로": [30],
     "아티쟁": [120],
     "나흐마": [30],
-    "시공_20시": [10],  # 5분 -> 10분으로 변경
-    "시공_23시": [10],  # 5분 -> 10분으로 변경
-    "시공_02시": [10]   # 5분 -> 10분으로 변경
+    "시공_20시": [10],
+    "시공_23시": [10],
+    "시공_02시": [10]
 }
 
 EVENT_DESCRIPTION = {
-    "카이라": "매 시각 정각",
-    "슈고15": "매 시각 15분",
-    "슈고45": "매 시각 45분",
+    "카이라": "매 시각 정각 (06시~23시)",
+    "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
+    "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
     "아그로": "처치 후 12시간 간격",
-    "아티쟁": "화, 목, 토 오후 9시 5분",
+    "아티쟁": "화, 목, 토 오후 10시 정각",
     "나흐마": "토, 일 오후 10시",
     "시공_20시": "매일 저녁 8시 (20:00)",
     "시공_23시": "매일 밤 11시 (23:00)",
@@ -100,8 +100,18 @@ def format_pre_time(m):
         return f"{h}시간 {f'{rem}분 ' if rem else ''}전"
     return f"{m}분 전"
 
+def restore_all_on(uid):
+    """유저의 모든 이벤트 알림을 켜기 (설정된 pre 유지, 없으면 기본값 세팅)"""
+    u_events = get_user_data(uid)
+    for key in EVENT_DESCRIPTION:
+        entry = u_events.setdefault(key, {})
+        entry["on"] = True
+        if "pre" not in entry:
+            entry["pre"] = list(EVENT_DEFAULT_PRE.get(key, [0]))
+    save()
+
 # =========================
-# DM 전송 (최적화)
+# DM 전송
 # =========================
 
 async def send_dm_user(uid, text):
@@ -120,7 +130,7 @@ async def send_dm_user(uid, text):
 
 def build_main_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="🔔 알림 설정 센터", 
+        title="🔔 알림 설정 센터",
         description="이벤트 발생 전 DM으로 알림을 보내드립니다.",
         color=0x5865F2
     )
@@ -128,16 +138,17 @@ def build_main_embed() -> discord.Embed:
         "1️⃣ 아래 **[목록보기 / 설정하기]** 버튼을 클릭하세요.\n"
         "2️⃣ 알림을 원하는 **콘텐츠 버튼**을 누르세요.\n"
         "3️⃣ **[알림 켜기]** 버튼을 누르면 활성화 됩니다! (초록색 확인)\n"
-        "4️⃣ 원하는 **사전 알림 시간**도 복수 선택 가능합니다."
+        "4️⃣ 원하는 **사전 알림 시간**도 복수 선택 가능합니다.\n"
+        "5️⃣ 봇 재시작 후 **[이전 설정 복구]** 버튼으로 한 번에 모두 재활성화!"
     )
     embed.add_field(name="📖 사용 방법", value=guide_text, inline=False)
     lines = [f"{EVENT_EMOJI.get(k)} **{k}** — {d}" for k, d in EVENT_DESCRIPTION.items()]
     embed.add_field(name="📅 지원 이벤트 목록", value="\n".join(lines), inline=False)
-    
+
     if "agro" in data and "next" in data["agro"]:
         nt = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
         embed.set_footer(text=f"👹 아그로 다음 등장 예상: {nt.strftime('%m/%d %H:%M')}")
-    
+
     return embed
 
 def build_my_embed(uid: str) -> discord.Embed:
@@ -170,12 +181,13 @@ def build_pre_embed(uid: str, key: str) -> discord.Embed:
     return embed
 
 # -------------------------
-# 자동 삭제 로직이 포함된 Views
+# Views
 # -------------------------
 
 class MainView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+
     @discord.ui.button(label="목록보기 / 설정하기", emoji="🔔", style=discord.ButtonStyle.primary, custom_id="main_open")
     async def open_list(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = str(interaction.user.id)
@@ -185,12 +197,35 @@ class MainView(discord.ui.View):
             view=view,
             ephemeral=True
         )
-        # 타임아웃 시 삭제를 위해 메시지 객체 저장
         view.message = await interaction.original_response()
+
+    @discord.ui.button(label="이전 설정 복구", emoji="🔄", style=discord.ButtonStyle.success, custom_id="main_restore")
+    async def restore_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = str(interaction.user.id)
+        u_events = data["events"].get(uid, {})
+
+        if not u_events:
+            await interaction.response.send_message(
+                "⚠️ 저장된 설정이 없습니다. 먼저 알림을 설정해주세요.",
+                ephemeral=True
+            )
+            return
+
+        restore_all_on(uid)
+
+        view = MyListView(uid)
+        await interaction.response.send_message(
+            content="✅ 이전에 설정하신 모든 알림이 복구되었습니다!",
+            embed=build_my_embed(uid),
+            view=view,
+            ephemeral=True
+        )
+        view.message = await interaction.original_response()
+
 
 class MyListView(discord.ui.View):
     def __init__(self, uid: str):
-        super().__init__(timeout=180) # 3분간 입력 없으면 삭제
+        super().__init__(timeout=180)
         self.uid = uid
         self.message = None
         for key in EVENT_DESCRIPTION:
@@ -204,10 +239,12 @@ class MyListView(discord.ui.View):
         except:
             pass
 
+
 class EventSelectButton(discord.ui.Button):
     def __init__(self, uid: str, key: str, style: discord.ButtonStyle):
         super().__init__(label=key, emoji=EVENT_EMOJI.get(key, "•"), style=style)
         self.uid, self.key = uid, key
+
     async def callback(self, interaction: discord.Interaction):
         view = PreSelectView(self.uid, self.key)
         await interaction.response.edit_message(
@@ -215,6 +252,7 @@ class EventSelectButton(discord.ui.Button):
             view=view
         )
         view.message = await interaction.original_response()
+
 
 class PreSelectView(discord.ui.View):
     def __init__(self, uid: str, key: str):
@@ -233,33 +271,41 @@ class PreSelectView(discord.ui.View):
         except:
             pass
 
+
 class PreTimeButton(discord.ui.Button):
     def __init__(self, uid: str, key: str, minutes: int):
         pres = get_pre(uid, key)
         style = discord.ButtonStyle.success if minutes in pres else discord.ButtonStyle.secondary
         super().__init__(label=format_pre_time(minutes), style=style)
         self.uid, self.key, self.minutes = uid, key, minutes
+
     async def callback(self, interaction: discord.Interaction):
         u_data = get_user_data(self.uid).setdefault(self.key, {})
         current = list(get_pre(self.uid, self.key))
-        if self.minutes in current: current.remove(self.minutes)
-        else: current.append(self.minutes); current.sort()
+        if self.minutes in current:
+            current.remove(self.minutes)
+        else:
+            current.append(self.minutes)
+            current.sort()
         u_data["pre"] = current
-        if current: u_data["on"] = True
+        if current:
+            u_data["on"] = True
         save()
         view = PreSelectView(self.uid, self.key)
         await interaction.response.edit_message(embed=build_pre_embed(self.uid, self.key), view=view)
         view.message = await interaction.original_response()
 
+
 class EventOnOffButton(discord.ui.Button):
     def __init__(self, uid: str, key: str):
         on = is_on(uid, key)
         super().__init__(
-            label=f"알림 {'끄기' if on else '켜기'}", 
-            style=discord.ButtonStyle.danger if on else discord.ButtonStyle.primary, 
+            label=f"알림 {'끄기' if on else '켜기'}",
+            style=discord.ButtonStyle.danger if on else discord.ButtonStyle.primary,
             row=3
         )
         self.uid, self.key = uid, key
+
     async def callback(self, interaction: discord.Interaction):
         u_data = get_user_data(self.uid).setdefault(self.key, {})
         u_data["on"] = not u_data.get("on", False)
@@ -268,10 +314,12 @@ class EventOnOffButton(discord.ui.Button):
         await interaction.response.edit_message(embed=build_pre_embed(self.uid, self.key), view=view)
         view.message = await interaction.original_response()
 
+
 class BackButton(discord.ui.Button):
     def __init__(self, uid: str):
         super().__init__(label="← 뒤로가기", style=discord.ButtonStyle.secondary, row=4)
         self.uid = uid
+
     async def callback(self, interaction: discord.Interaction):
         view = MyListView(self.uid)
         await interaction.response.edit_message(embed=build_my_embed(self.uid), view=view)
@@ -284,15 +332,63 @@ class BackButton(discord.ui.Button):
 sent_cache = {}
 agro_next = None
 
+
+def next_even_hour_target(now: datetime) -> datetime:
+    """다음 짝수 시각 정각 datetime 반환"""
+    h = now.hour
+    if now.minute == 0 and now.second == 0 and h % 2 == 0:
+        # 정확히 짝수 정각이면 현재 시각
+        return now.replace(second=0, microsecond=0)
+    # 다음 짝수 시각
+    next_h = h + 1 if h % 2 == 1 else h + 2
+    target = now.replace(minute=0, second=0, microsecond=0)
+    if next_h >= 24:
+        target = (target + timedelta(days=1)).replace(hour=next_h % 24)
+    else:
+        target = target.replace(hour=next_h)
+    return target
+
+
+def next_odd_hour_target(now: datetime) -> datetime:
+    """다음 홀수 시각 정각 datetime 반환"""
+    h = now.hour
+    if now.minute == 0 and now.second == 0 and h % 2 == 1:
+        return now.replace(second=0, microsecond=0)
+    next_h = h + 1 if h % 2 == 0 else h + 2
+    target = now.replace(minute=0, second=0, microsecond=0)
+    if next_h >= 24:
+        target = (target + timedelta(days=1)).replace(hour=next_h % 24)
+    else:
+        target = target.replace(hour=next_h)
+    return target
+
+
+def next_kaira_target(now: datetime) -> datetime | None:
+    """
+    다음 카이라 등장 시각 반환 (06~23시 정각만).
+    해당 범위에 없으면 None.
+    """
+    h = now.hour
+    if now.minute == 0 and now.second == 0 and 6 <= h <= 23:
+        return now.replace(second=0, microsecond=0)
+    next_h = h + 1 if now.minute > 0 else h
+    # 범위 벗어나면 None
+    if not (6 <= next_h <= 23):
+        return None
+    return now.replace(hour=next_h, minute=0, second=0, microsecond=0)
+
+
 @tasks.loop(seconds=30)
 async def loop_check():
     global agro_next
     try:
         now = datetime.now(KST)
-        weekday = now.weekday()
+        weekday = now.weekday()  # 월=0, 화=1, 수=2, 목=3, 금=4, 토=5, 일=6
+
         async def check_and_send(key, msg, target_dt: datetime):
             for uid in list(data["events"].keys()):
-                if not is_on(uid, key): continue
+                if not is_on(uid, key):
+                    continue
                 for pre in get_pre(uid, key):
                     send_at = target_dt - timedelta(minutes=pre)
                     if 0 <= (now - send_at).total_seconds() < 30:
@@ -302,31 +398,50 @@ async def loop_check():
                             notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
                             await send_dm_user(uid, notice)
 
-        if weekday in [1, 3, 5]: 
-            await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", now.replace(hour=21, minute=5, second=0))
-        if weekday in [5, 6]:
-            await check_and_send("나흐마", "🔥 나흐마 등장!", now.replace(hour=22, minute=0, second=0))
-        for h in [20, 23, 2]:
-            target = now.replace(hour=h, minute=0, second=0)
-            if h == 2 and now.hour > 2: target += timedelta(days=1)
-            await check_and_send(f"시공_{h:02d}시", f"🌌 시공 등장! ({h}시)", target)
-        
-        next_kaira = (now + timedelta(hours=1)).replace(minute=0, second=0) if now.minute > 0 else now.replace(minute=0, second=0)
-        await check_and_send("카이라", "⏰ 카이라 등장!", next_kaira)
-        for m in [15, 45]:
-            target = now.replace(minute=m, second=0)
-            if now.minute > m: target += timedelta(hours=1)
-            await check_and_send(f"슈고{m}", f"🛡️ 슈고 등장! ({m}분)", target)
+        # ── 아티쟁: 화(1), 목(3), 토(5) 오후 10시 정각 ──
+        if weekday in [1, 3, 5]:
+            target = now.replace(hour=22, minute=0, second=0, microsecond=0)
+            await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", target)
 
+        # ── 나흐마: 토(5), 일(6) 오후 10시 ──
+        if weekday in [5, 6]:
+            target = now.replace(hour=22, minute=0, second=0, microsecond=0)
+            await check_and_send("나흐마", "🔥 나흐마 등장!", target)
+
+        # ── 시공: 20시, 23시, 02시 ──
+        for h in [20, 23, 2]:
+            key_name = f"시공_{h:02d}시"
+            target = now.replace(hour=h, minute=0, second=0, microsecond=0)
+            if h == 2 and now.hour > 2:
+                target += timedelta(days=1)
+            await check_and_send(key_name, f"🌌 시공 등장! ({h:02d}:00)", target)
+
+        # ── 카이라: 06~23시 정각만 ──
+        kaira_target = next_kaira_target(now)
+        if kaira_target:
+            await check_and_send("카이라", f"⏰ 카이라 등장! ({kaira_target.hour:02d}:00)", kaira_target)
+
+        # ── 슈고15: 짝수 시각 정각 ──
+        s15_target = next_even_hour_target(now)
+        await check_and_send("슈고15", f"🛡️ 슈고 등장! ({s15_target.hour:02d}:00)", s15_target)
+
+        # ── 슈고45: 홀수 시각 정각 ──
+        s45_target = next_odd_hour_target(now)
+        await check_and_send("슈고45", f"🛡️ 슈고 등장! ({s45_target.hour:02d}:00)", s45_target)
+
+        # ── 아그로 ──
         if agro_next:
             await check_and_send("아그로", "👹 아그로 등장!", agro_next)
             if now >= agro_next:
-                agro_next += timedelta(hours=12); data["agro"]["next"] = agro_next.isoformat(); save()
+                agro_next += timedelta(hours=12)
+                data["agro"]["next"] = agro_next.isoformat()
+                save()
 
-    except Exception as e: print("루프 에러:", e)
+    except Exception as e:
+        print("루프 에러:", e)
 
 # =========================
-# 실행 및 초기화
+# 커맨드
 # =========================
 
 @bot.tree.command(name="아그로", description="아그로 시간 등록 (예: 1245 -> 12시간 45분 후)")
@@ -335,11 +450,18 @@ async def cmd_agro(interaction: discord.Interaction, time: str):
     try:
         time = time.strip().zfill(3)
         mm, hh = int(time[-2:]), int(time[:-2]) if len(time) > 2 else 0
-        if mm >= 60: raise ValueError
+        if mm >= 60:
+            raise ValueError
         agro_next = datetime.now(KST) + timedelta(hours=hh, minutes=mm)
-        data["agro"]["next"] = agro_next.isoformat(); save()
+        data["agro"]["next"] = agro_next.isoformat()
+        save()
         await interaction.response.send_message(f"👹 아그로 등록: **{agro_next.strftime('%m/%d %H:%M')}**")
-    except: await interaction.response.send_message("형식 오류!", ephemeral=True)
+    except:
+        await interaction.response.send_message("형식 오류!", ephemeral=True)
+
+# =========================
+# 실행 및 초기화
+# =========================
 
 @bot.event
 async def on_ready():
@@ -347,13 +469,16 @@ async def on_ready():
     if "agro" in data and "next" in data["agro"]:
         agro_next = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
     bot.add_view(MainView())
-    if not loop_check.is_running(): loop_check.start()
+    if not loop_check.is_running():
+        loop_check.start()
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         async for msg in channel.history(limit=5):
             if msg.author == bot.user and msg.components:
-                await msg.edit(embed=build_main_embed(), view=MainView()); break
-        else: await channel.send(embed=build_main_embed(), view=MainView())
+                await msg.edit(embed=build_main_embed(), view=MainView())
+                break
+        else:
+            await channel.send(embed=build_main_embed(), view=MainView())
     await bot.tree.sync()
     print(f"봇 준비 완료: {bot.user}")
 
