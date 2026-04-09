@@ -42,8 +42,7 @@ EVENT_DESCRIPTION = {
     "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
     "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
     "아그로": "처치 후 12시간 간격",
-    "아티쟁": "화, 목, 토 오후 10시 정각",
-    "나흐마": "토, 일 오후 10시",
+    "아티쟁": "화, 목, 토 오후 9시 정각", 
     "시공_20시": "매일 저녁 8시 (20:00)",
     "시공_23시": "매일 밤 11시 (23:00)",
     "시공_02시": "매일 새벽 2시 (02:00)"
@@ -362,9 +361,9 @@ async def loop_check():
                             notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
                             await send_dm_user(uid, notice)
 
-        # ── 아티쟁: 화(1), 목(3), 토(5) 오후 10시 정각 ──
+        # ── 아티쟁: 화(1), 목(3), 토(5) 오후 9시 정각 ──
         if weekday in [1, 3, 5]:
-            target = now.replace(hour=22, minute=0, second=0, microsecond=0)
+            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
             await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", target)
 
         # ── 나흐마: 토(5), 일(6) 오후 10시 ──
