@@ -34,7 +34,8 @@ EVENT_DEFAULT_PRE = {
     "나흐마": [30],
     "시공_20시": [10],
     "시공_23시": [10],
-    "시공_02시": [10]
+    "시공_02시": [10],
+    "차원침공": [5]  # ← 추가
 }
 
 EVENT_DESCRIPTION = {
@@ -42,10 +43,12 @@ EVENT_DESCRIPTION = {
     "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
     "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
     "아그로": "처치 후 12시간 간격",
-    "아티쟁": "화, 목, 토 오후 9시 정각", 
+    "아티쟁": "화, 목, 토 오후 9시 정각",
+    "나흐마": "토, 일 오후 10시 정각",
     "시공_20시": "매일 저녁 8시 (20:00)",
     "시공_23시": "매일 밤 11시 (23:00)",
-    "시공_02시": "매일 새벽 2시 (02:00)"
+    "시공_02시": "매일 새벽 2시 (02:00)",
+    "차원침공": "매 시각 30분 (00:30, 01:30 ... 23:30)"  # ← 추가
 }
 
 EVENT_EMOJI = {
@@ -57,7 +60,8 @@ EVENT_EMOJI = {
     "나흐마": "🔥",
     "시공_20시": "🌌",
     "시공_23시": "🌌",
-    "시공_02시": "🌌"
+    "시공_02시": "🌌",
+    "차원침공": "🌀"  # ← 추가
 }
 
 PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
@@ -341,6 +345,16 @@ def next_kaira_target(now: datetime) -> datetime | None:
     return now.replace(hour=next_h, minute=0, second=0, microsecond=0)
 
 
+def next_dimensional_target(now: datetime) -> datetime:
+    """다음 차원침공 시각 반환 (매 시 30분)"""
+    # 현재 정각 기준 30분 시각
+    target = now.replace(minute=30, second=0, microsecond=0)
+    # 이미 지났으면 다음 시간의 30분으로
+    if now >= target:
+        target += timedelta(hours=1)
+    return target
+
+
 @tasks.loop(seconds=30)
 async def loop_check():
     global agro_next
@@ -391,6 +405,10 @@ async def loop_check():
         # ── 슈고45: 홀수 시각 정각 ──
         s45_target = next_odd_hour_target(now)
         await check_and_send("슈고45", f"🛡️ 슈고 등장! ({s45_target.hour:02d}:00)", s45_target)
+
+        # ── 차원침공: 매 시 30분 ──
+        dim_target = next_dimensional_target(now)
+        await check_and_send("차원침공", f"🌀 차원침공 시작! ({dim_target.hour:02d}:30)", dim_target)
 
         # ── 아그로 ──
         if agro_next:
