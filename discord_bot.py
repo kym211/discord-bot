@@ -35,7 +35,7 @@ EVENT_DEFAULT_PRE = {
     "시공_20시": [10],
     "시공_23시": [10],
     "시공_02시": [10],
-    "차원침공": [0]  # ← 추가
+    "차원침공": [0]
 }
 
 EVENT_DESCRIPTION = {
@@ -48,7 +48,7 @@ EVENT_DESCRIPTION = {
     "시공_20시": "매일 저녁 8시 (20:00)",
     "시공_23시": "매일 밤 11시 (23:00)",
     "시공_02시": "매일 새벽 2시 (02:00)",
-    "차원침공": "매 시각 30분 (00:30, 01:30 ... 23:30)"  # ← 추가
+    "차원침공": "매 시각 30분 (00:30, 01:30 ... 23:30)"
 }
 
 EVENT_EMOJI = {
@@ -61,7 +61,7 @@ EVENT_EMOJI = {
     "시공_20시": "🌌",
     "시공_23시": "🌌",
     "시공_02시": "🌌",
-    "차원침공": "🌀"  # ← 추가
+    "차원침공": "🌀"
 }
 
 PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
@@ -137,10 +137,6 @@ def build_main_embed() -> discord.Embed:
     embed.add_field(name="📖 사용 방법", value=guide_text, inline=False)
     lines = [f"{EVENT_EMOJI.get(k)} **{k}** — {d}" for k, d in EVENT_DESCRIPTION.items()]
     embed.add_field(name="📅 지원 이벤트 목록", value="\n".join(lines), inline=False)
-
-    if "agro" in data and "next" in data["agro"]:
-        nt = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
-        embed.set_footer(text=f"👹 아그로 다음 등장 예상: {nt.strftime('%m/%d %H:%M')}")
 
     return embed
 
@@ -302,6 +298,9 @@ class BackButton(discord.ui.Button):
 sent_cache = {}
 agro_next = None
 
+# 아그로 실제 리스폰 간격: 12시간 + 30초
+AGRO_INTERVAL = timedelta(hours=12, seconds=30)
+
 
 def next_even_hour_target(now: datetime) -> datetime:
     """다음 짝수 시각 정각 datetime 반환"""
@@ -347,9 +346,7 @@ def next_kaira_target(now: datetime) -> datetime | None:
 
 def next_dimensional_target(now: datetime) -> datetime:
     """다음 차원침공 시각 반환 (매 시 30분)"""
-    # 현재 정각 기준 30분 시각
     target = now.replace(minute=30, second=0, microsecond=0)
-    # 이미 지났으면 다음 시간의 30분으로
     if now >= target:
         target += timedelta(hours=1)
     return target
@@ -410,11 +407,11 @@ async def loop_check():
         dim_target = next_dimensional_target(now)
         await check_and_send("차원침공", f"🌀 차원침공 시작! ({dim_target.hour:02d}:30)", dim_target)
 
-        # ── 아그로 ──
+        # ── 아그로: 12시간 30초 간격 (표기는 12시간) ──
         if agro_next:
             await check_and_send("아그로", "👹 아그로 등장!", agro_next)
             if now >= agro_next:
-                agro_next += timedelta(hours=12)
+                agro_next += AGRO_INTERVAL
                 data["agro"]["next"] = agro_next.isoformat()
                 save()
 
