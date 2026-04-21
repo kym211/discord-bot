@@ -53,7 +53,7 @@ EVENT_EMOJI = {
     "슈고15": "🛡️",
     "슈고45": "🛡️",
     "아티팩트_점령전": "🏰",
-    "어비스_보스": "💀",
+    "어비스_보스": "👹",
     "수호신장_나흐마": "🔥",
     "시공_20시": "🌌",
     "시공_23시": "🌌",
@@ -354,7 +354,7 @@ async def loop_check():
         # ── 어비스 보스: 수(2), 토(5) 22:40 ──
         if weekday in [2, 5]:
             target = now.replace(hour=22, minute=40, second=0, microsecond=0)
-            await check_and_send("어비스_보스", "💀 어비스 보스 등장!", target)
+            await check_and_send("어비스_보스", "👹 어비스 보스 등장!", target)
 
         # ── 수호신장 나흐마: 금(4), 일(6) 22:10 ──
         if weekday in [4, 6]:
