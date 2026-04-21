@@ -28,7 +28,6 @@ DATA_FILE = "/data/data.json"
 EVENT_DEFAULT_PRE = {
     "슈고15": [0],
     "슈고45": [0],
-    "아티쟁": [120],
     "아티팩트_점령전": [30],
     "어비스_보스": [30],
     "수호신장_나흐마": [30],
@@ -41,7 +40,6 @@ EVENT_DEFAULT_PRE = {
 EVENT_DESCRIPTION = {
     "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
     "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
-    "아티쟁": "화, 목, 토 오후 9시 정각",
     "아티팩트_점령전": "수, 토 오후 10시 10분 (22:10)",
     "어비스_보스": "수, 토 오후 10시 40분 (22:40)",
     "수호신장_나흐마": "금, 일 오후 10시 10분 (22:10)",
@@ -54,7 +52,6 @@ EVENT_DESCRIPTION = {
 EVENT_EMOJI = {
     "슈고15": "🛡️",
     "슈고45": "🛡️",
-    "아티쟁": "⚔️",
     "아티팩트_점령전": "🏰",
     "어비스_보스": "💀",
     "수호신장_나흐마": "🔥",
@@ -349,22 +346,17 @@ async def loop_check():
                             notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
                             await send_dm_user(uid, notice)
 
-        # ── 아티쟁: 화(1), 목(3), 토(5) 오후 9시 정각 ──
-        if weekday in [1, 3, 5]:
-            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
-            await check_and_send("아티쟁", "⚔️ 아티쟁 시작!", target)
-
-        # ── 아티팩트 점령전: 수(2), 토(5) 오후 10시 10분 ──
+        # ── 아티팩트 점령전: 수(2), 토(5) 22:10 ──
         if weekday in [2, 5]:
             target = now.replace(hour=22, minute=10, second=0, microsecond=0)
             await check_and_send("아티팩트_점령전", "🏰 아티팩트 점령전 시작!", target)
 
-        # ── 어비스 보스: 수(2), 토(5) 오후 10시 40분 ──
+        # ── 어비스 보스: 수(2), 토(5) 22:40 ──
         if weekday in [2, 5]:
             target = now.replace(hour=22, minute=40, second=0, microsecond=0)
             await check_and_send("어비스_보스", "💀 어비스 보스 등장!", target)
 
-        # ── 수호신장 나흐마: 금(4), 일(6) 오후 10시 10분 ──
+        # ── 수호신장 나흐마: 금(4), 일(6) 22:10 ──
         if weekday in [4, 6]:
             target = now.replace(hour=22, minute=10, second=0, microsecond=0)
             await check_and_send("수호신장_나흐마", "🔥 수호신장 나흐마 등장!", target)
