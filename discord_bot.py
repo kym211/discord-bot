@@ -27,8 +27,7 @@ DATA_FILE = "/data/data.json"
 
 EVENT_DEFAULT_PRE = {
     "카이라": [2],
-    "슈고15": [0],
-    "슈고45": [0],
+    "슈고": [0],
     "아그로": [30],
     "아티팩트_점령전": [30],
     "어비스_보스": [30],
@@ -41,8 +40,7 @@ EVENT_DEFAULT_PRE = {
 
 EVENT_DESCRIPTION = {
     "카이라": "매 시각 정각 (06시~23시)",
-    "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
-    "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
+    "슈고": "매 시각 정각 (00시~23시)",
     "아그로": "처치 후 12시간 간격",
     "아티팩트_점령전": "수, 토 오후 10시 10분 (22:10)",
     "어비스_보스": "수, 토 오후 10시 40분 (22:40)",
@@ -55,8 +53,7 @@ EVENT_DESCRIPTION = {
 
 EVENT_EMOJI = {
     "카이라": "⏰",
-    "슈고15": "🛡️",
-    "슈고45": "🛡️",
+    "슈고": "🛡️",
     "아그로": "👹",
     "아티팩트_점령전": "🏰",
     "어비스_보스": "💀",
@@ -68,7 +65,6 @@ EVENT_EMOJI = {
 }
 
 PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
-HOUR_OPTIONS = list(range(24))  # 0~23시
 
 # =========================
 # 데이터 관리 함수
@@ -112,7 +108,6 @@ def format_pre_time(m):
 # =========================
 
 def get_dnd(uid: str) -> dict:
-    """방해금지 설정 반환. {"on": bool, "start": int, "end": int}"""
     return get_user_data(uid).get("__dnd__", {"on": False, "start": 0, "end": 8})
 
 def set_dnd(uid: str, on: bool = None, start: int = None, end: int = None):
@@ -128,7 +123,6 @@ def set_dnd(uid: str, on: bool = None, start: int = None, end: int = None):
     save()
 
 def is_dnd_active(uid: str, now: datetime) -> bool:
-    """현재 시각이 방해금지 시간대인지 확인"""
     dnd = get_dnd(uid)
     if not dnd.get("on", False):
         return False
@@ -136,7 +130,7 @@ def is_dnd_active(uid: str, now: datetime) -> bool:
     h = now.hour
     if s <= e:
         return s <= h < e
-    else:  # 자정 넘기는 경우 (예: 22시~06시)
+    else:
         return h >= s or h < e
 
 def format_dnd(uid: str) -> str:
@@ -152,7 +146,7 @@ def format_dnd(uid: str) -> str:
 async def send_dm_user(uid, text):
     now = datetime.now(KST)
     if is_dnd_active(str(uid), now):
-        return  # 방해금지 시간대면 전송 스킵
+        return
     try:
         user_id = int(uid)
         user = bot.get_user(user_id)
@@ -260,7 +254,6 @@ class MyListView(discord.ui.View):
         for key in EVENT_DESCRIPTION:
             style = discord.ButtonStyle.success if is_on(uid, key) else discord.ButtonStyle.secondary
             self.add_item(EventSelectButton(uid=uid, key=key, style=style))
-        # 방해금지 버튼 (마지막 row)
         self.add_item(DndOpenButton(uid=uid))
 
     async def on_timeout(self):
@@ -380,14 +373,9 @@ class DndView(discord.ui.View):
         self.uid = uid
         self.message = None
         dnd = get_dnd(uid)
-
-        # 시작 시각 Select (row 0)
         self.add_item(DndHourSelect(uid=uid, kind="start", current=dnd["start"]))
-        # 종료 시각 Select (row 1)
         self.add_item(DndHourSelect(uid=uid, kind="end", current=dnd["end"]))
-        # 켜기/끄기 버튼 (row 2)
         self.add_item(DndOnOffButton(uid=uid))
-        # 뒤로가기 (row 2)
         self.add_item(DndBackButton(uid=uid))
 
     async def on_timeout(self):
@@ -401,21 +389,13 @@ class DndView(discord.ui.View):
 class DndHourSelect(discord.ui.Select):
     def __init__(self, uid: str, kind: str, current: int):
         self.uid = uid
-        self.kind = kind  # "start" or "end"
+        self.kind = kind
         label = "🌙 시작 시각 선택" if kind == "start" else "☀️ 종료 시각 선택"
         options = [
-            discord.SelectOption(
-                label=f"{h:02d}:00",
-                value=str(h),
-                default=(h == current)
-            )
+            discord.SelectOption(label=f"{h:02d}:00", value=str(h), default=(h == current))
             for h in range(24)
         ]
-        super().__init__(
-            placeholder=label,
-            options=options,
-            row=0 if kind == "start" else 1
-        )
+        super().__init__(placeholder=label, options=options, row=0 if kind == "start" else 1)
 
     async def callback(self, interaction: discord.Interaction):
         h = int(self.values[0])
@@ -465,29 +445,11 @@ agro_next = None
 AGRO_INTERVAL = timedelta(hours=12, seconds=30)
 
 
-def next_even_hour_target(now: datetime) -> datetime:
-    h = now.hour
-    if now.minute == 0 and now.second == 0 and h % 2 == 0:
+def next_hour_target(now: datetime) -> datetime:
+    """다음 정각 datetime 반환 (매 시각)"""
+    if now.minute == 0 and now.second == 0:
         return now.replace(second=0, microsecond=0)
-    next_h = h + 1 if h % 2 == 1 else h + 2
-    target = now.replace(minute=0, second=0, microsecond=0)
-    if next_h >= 24:
-        target = (target + timedelta(days=1)).replace(hour=next_h % 24)
-    else:
-        target = target.replace(hour=next_h)
-    return target
-
-
-def next_odd_hour_target(now: datetime) -> datetime:
-    h = now.hour
-    if now.minute == 0 and now.second == 0 and h % 2 == 1:
-        return now.replace(second=0, microsecond=0)
-    next_h = h + 1 if h % 2 == 0 else h + 2
-    target = now.replace(minute=0, second=0, microsecond=0)
-    if next_h >= 24:
-        target = (target + timedelta(days=1)).replace(hour=next_h % 24)
-    else:
-        target = target.replace(hour=next_h)
+    target = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     return target
 
 
@@ -533,13 +495,9 @@ async def loop_check():
         if kaira_target:
             await check_and_send("카이라", f"⏰ 카이라 등장! ({kaira_target.hour:02d}:00)", kaira_target)
 
-        # ── 슈고15: 짝수 시각 정각 ──
-        s15_target = next_even_hour_target(now)
-        await check_and_send("슈고15", f"🛡️ 슈고 등장! ({s15_target.hour:02d}:00)", s15_target)
-
-        # ── 슈고45: 홀수 시각 정각 ──
-        s45_target = next_odd_hour_target(now)
-        await check_and_send("슈고45", f"🛡️ 슈고 등장! ({s45_target.hour:02d}:00)", s45_target)
+        # ── 슈고: 매 시각 정각 ──
+        shugo_target = next_hour_target(now)
+        await check_and_send("슈고", f"🛡️ 슈고 등장! ({shugo_target.hour:02d}:00)", shugo_target)
 
         # ── 아그로: 12시간 30초 간격 ──
         if agro_next:
