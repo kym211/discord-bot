@@ -68,6 +68,7 @@ EVENT_EMOJI = {
 }
 
 PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
+HOUR_OPTIONS = list(range(24))  # 0~23시
 
 # =========================
 # 데이터 관리 함수
@@ -107,10 +108,51 @@ def format_pre_time(m):
     return f"{m}분 전"
 
 # =========================
+# 방해금지 관련 함수
+# =========================
+
+def get_dnd(uid: str) -> dict:
+    """방해금지 설정 반환. {"on": bool, "start": int, "end": int}"""
+    return get_user_data(uid).get("__dnd__", {"on": False, "start": 0, "end": 8})
+
+def set_dnd(uid: str, on: bool = None, start: int = None, end: int = None):
+    u_data = get_user_data(uid)
+    dnd = u_data.get("__dnd__", {"on": False, "start": 0, "end": 8})
+    if on is not None:
+        dnd["on"] = on
+    if start is not None:
+        dnd["start"] = start
+    if end is not None:
+        dnd["end"] = end
+    u_data["__dnd__"] = dnd
+    save()
+
+def is_dnd_active(uid: str, now: datetime) -> bool:
+    """현재 시각이 방해금지 시간대인지 확인"""
+    dnd = get_dnd(uid)
+    if not dnd.get("on", False):
+        return False
+    s, e = dnd["start"], dnd["end"]
+    h = now.hour
+    if s <= e:
+        return s <= h < e
+    else:  # 자정 넘기는 경우 (예: 22시~06시)
+        return h >= s or h < e
+
+def format_dnd(uid: str) -> str:
+    dnd = get_dnd(uid)
+    if not dnd.get("on", False):
+        return "⬜ 방해금지 꺼짐"
+    return f"🌙 방해금지 {dnd['start']:02d}:00 ~ {dnd['end']:02d}:00"
+
+# =========================
 # DM 전송
 # =========================
 
 async def send_dm_user(uid, text):
+    now = datetime.now(KST)
+    if is_dnd_active(str(uid), now):
+        return  # 방해금지 시간대면 전송 스킵
     try:
         user_id = int(uid)
         user = bot.get_user(user_id)
@@ -135,7 +177,8 @@ def build_main_embed() -> discord.Embed:
         "2️⃣ 알림을 원하는 **콘텐츠 버튼**을 누르세요.\n"
         "3️⃣ **[알림 켜기]** 버튼을 누르면 활성화 됩니다! (초록색 확인)\n"
         "4️⃣ 원하는 **사전 알림 시간**도 복수 선택 가능합니다.\n"
-        "5️⃣ 봇이 업데이트되어도 설정은 자동으로 유지됩니다!"
+        "5️⃣ **[🌙 방해금지 설정]** 버튼으로 알림 안 받을 시간대를 지정하세요.\n"
+        "6️⃣ 봇이 업데이트되어도 설정은 자동으로 유지됩니다!"
     )
     embed.add_field(name="📖 사용 방법", value=guide_text, inline=False)
     lines = [f"{EVENT_EMOJI.get(k)} **{k}** — {d}" for k, d in EVENT_DESCRIPTION.items()]
@@ -152,6 +195,7 @@ def build_my_embed(uid: str) -> discord.Embed:
         pre_str = ", ".join(format_pre_time(p) for p in pres)
         lines.append(f"{status} {emoji} **{key}** | {pre_str}\n　{desc}")
     embed.description = "\n\n".join(lines)
+    embed.set_footer(text=format_dnd(uid))
     return embed
 
 def build_pre_embed(uid: str, key: str) -> discord.Embed:
@@ -168,6 +212,23 @@ def build_pre_embed(uid: str, key: str) -> discord.Embed:
             "원하는 시간 버튼을 눌러 알림 시점을 정하세요."
         ),
         color=0x5865F2
+    )
+    return embed
+
+def build_dnd_embed(uid: str) -> discord.Embed:
+    dnd = get_dnd(uid)
+    on = dnd.get("on", False)
+    s, e = dnd["start"], dnd["end"]
+    embed = discord.Embed(
+        title="🌙 방해금지 설정",
+        description=(
+            f"**현재 상태:** {'🌙 방해금지 켜짐' if on else '⬜ 방해금지 꺼짐'}\n"
+            f"**설정 시간대:** {s:02d}:00 ~ {e:02d}:00\n\n"
+            "설정된 시간대에는 모든 알림 DM이 전송되지 않습니다.\n"
+            "시작 시각과 종료 시각을 각각 선택하세요.\n"
+            "*(예: 00시~08시 → 자정부터 오전 8시까지 알림 없음)*"
+        ),
+        color=0x2F3136
     )
     return embed
 
@@ -199,6 +260,8 @@ class MyListView(discord.ui.View):
         for key in EVENT_DESCRIPTION:
             style = discord.ButtonStyle.success if is_on(uid, key) else discord.ButtonStyle.secondary
             self.add_item(EventSelectButton(uid=uid, key=key, style=style))
+        # 방해금지 버튼 (마지막 row)
+        self.add_item(DndOpenButton(uid=uid))
 
     async def on_timeout(self):
         try:
@@ -206,6 +269,19 @@ class MyListView(discord.ui.View):
                 await self.message.delete()
         except:
             pass
+
+
+class DndOpenButton(discord.ui.Button):
+    def __init__(self, uid: str):
+        dnd = get_dnd(uid)
+        style = discord.ButtonStyle.primary if dnd.get("on") else discord.ButtonStyle.secondary
+        super().__init__(label="🌙 방해금지 설정", style=style, row=4)
+        self.uid = uid
+
+    async def callback(self, interaction: discord.Interaction):
+        view = DndView(self.uid)
+        await interaction.response.edit_message(embed=build_dnd_embed(self.uid), view=view)
+        view.message = await interaction.original_response()
 
 
 class EventSelectButton(discord.ui.Button):
@@ -292,6 +368,92 @@ class BackButton(discord.ui.Button):
         view = MyListView(self.uid)
         await interaction.response.edit_message(embed=build_my_embed(self.uid), view=view)
         view.message = await interaction.original_response()
+
+
+# -------------------------
+# 방해금지 View
+# -------------------------
+
+class DndView(discord.ui.View):
+    def __init__(self, uid: str):
+        super().__init__(timeout=180)
+        self.uid = uid
+        self.message = None
+        dnd = get_dnd(uid)
+
+        # 시작 시각 Select (row 0)
+        self.add_item(DndHourSelect(uid=uid, kind="start", current=dnd["start"]))
+        # 종료 시각 Select (row 1)
+        self.add_item(DndHourSelect(uid=uid, kind="end", current=dnd["end"]))
+        # 켜기/끄기 버튼 (row 2)
+        self.add_item(DndOnOffButton(uid=uid))
+        # 뒤로가기 (row 2)
+        self.add_item(DndBackButton(uid=uid))
+
+    async def on_timeout(self):
+        try:
+            if self.message:
+                await self.message.delete()
+        except:
+            pass
+
+
+class DndHourSelect(discord.ui.Select):
+    def __init__(self, uid: str, kind: str, current: int):
+        self.uid = uid
+        self.kind = kind  # "start" or "end"
+        label = "🌙 시작 시각 선택" if kind == "start" else "☀️ 종료 시각 선택"
+        options = [
+            discord.SelectOption(
+                label=f"{h:02d}:00",
+                value=str(h),
+                default=(h == current)
+            )
+            for h in range(24)
+        ]
+        super().__init__(
+            placeholder=label,
+            options=options,
+            row=0 if kind == "start" else 1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        h = int(self.values[0])
+        set_dnd(self.uid, **{self.kind: h})
+        view = DndView(self.uid)
+        await interaction.response.edit_message(embed=build_dnd_embed(self.uid), view=view)
+        view.message = await interaction.original_response()
+
+
+class DndOnOffButton(discord.ui.Button):
+    def __init__(self, uid: str):
+        dnd = get_dnd(uid)
+        on = dnd.get("on", False)
+        super().__init__(
+            label=f"방해금지 {'끄기' if on else '켜기'}",
+            style=discord.ButtonStyle.danger if on else discord.ButtonStyle.primary,
+            row=2
+        )
+        self.uid = uid
+
+    async def callback(self, interaction: discord.Interaction):
+        dnd = get_dnd(self.uid)
+        set_dnd(self.uid, on=not dnd.get("on", False))
+        view = DndView(self.uid)
+        await interaction.response.edit_message(embed=build_dnd_embed(self.uid), view=view)
+        view.message = await interaction.original_response()
+
+
+class DndBackButton(discord.ui.Button):
+    def __init__(self, uid: str):
+        super().__init__(label="← 뒤로가기", style=discord.ButtonStyle.secondary, row=2)
+        self.uid = uid
+
+    async def callback(self, interaction: discord.Interaction):
+        view = MyListView(self.uid)
+        await interaction.response.edit_message(embed=build_my_embed(self.uid), view=view)
+        view.message = await interaction.original_response()
+
 
 # =========================
 # 알림 체크 로직 (Loop)
