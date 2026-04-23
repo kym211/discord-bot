@@ -26,8 +26,10 @@ DATA_FILE = "/data/data.json"
 # =========================
 
 EVENT_DEFAULT_PRE = {
+    "카이라": [2],
     "슈고15": [0],
     "슈고45": [0],
+    "아그로": [30],
     "아티팩트_점령전": [30],
     "어비스_보스": [30],
     "수호신장_나흐마": [30],
@@ -38,8 +40,10 @@ EVENT_DEFAULT_PRE = {
 }
 
 EVENT_DESCRIPTION = {
+    "카이라": "매 시각 정각 (06시~23시)",
     "슈고15": "짝수 시각 정각 (00, 02, 04 ... 22시)",
     "슈고45": "홀수 시각 정각 (01, 03, 05 ... 23시)",
+    "아그로": "처치 후 12시간 간격",
     "아티팩트_점령전": "수, 토 오후 10시 10분 (22:10)",
     "어비스_보스": "수, 토 오후 10시 40분 (22:40)",
     "수호신장_나흐마": "금, 일 오후 10시 10분 (22:10)",
@@ -50,10 +54,12 @@ EVENT_DESCRIPTION = {
 }
 
 EVENT_EMOJI = {
+    "카이라": "⏰",
     "슈고15": "🛡️",
     "슈고45": "🛡️",
+    "아그로": "👹",
     "아티팩트_점령전": "🏰",
-    "어비스_보스": "👹",
+    "어비스_보스": "💀",
     "수호신장_나흐마": "🔥",
     "시공_20시": "🌌",
     "시공_23시": "🌌",
@@ -69,7 +75,7 @@ PRE_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 90, 120]
 
 def load():
     if not os.path.exists(DATA_FILE):
-        return {"events": {}}
+        return {"events": {}, "agro": {}}
     with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
 
@@ -292,6 +298,9 @@ class BackButton(discord.ui.Button):
 # =========================
 
 sent_cache = {}
+agro_next = None
+
+AGRO_INTERVAL = timedelta(hours=12, seconds=30)
 
 
 def next_even_hour_target(now: datetime) -> datetime:
@@ -320,6 +329,16 @@ def next_odd_hour_target(now: datetime) -> datetime:
     return target
 
 
+def next_kaira_target(now: datetime) -> datetime | None:
+    h = now.hour
+    if now.minute == 0 and now.second == 0 and 6 <= h <= 23:
+        return now.replace(second=0, microsecond=0)
+    next_h = h + 1 if now.minute > 0 else h
+    if not (6 <= next_h <= 23):
+        return None
+    return now.replace(hour=next_h, minute=0, second=0, microsecond=0)
+
+
 def next_dimensional_target(now: datetime) -> datetime:
     target = now.replace(minute=30, second=0, microsecond=0)
     if now >= target:
@@ -329,9 +348,10 @@ def next_dimensional_target(now: datetime) -> datetime:
 
 @tasks.loop(seconds=30)
 async def loop_check():
+    global agro_next
     try:
         now = datetime.now(KST)
-        weekday = now.weekday()  # 월=0, 화=1, 수=2, 목=3, 금=4, 토=5, 일=6
+        weekday = now.weekday()
 
         async def check_and_send(key, msg, target_dt: datetime):
             for uid in list(data["events"].keys()):
@@ -346,6 +366,27 @@ async def loop_check():
                             notice = f"{msg} ({format_pre_time(pre)})" if pre > 0 else msg
                             await send_dm_user(uid, notice)
 
+        # ── 카이라: 06~23시 정각 ──
+        kaira_target = next_kaira_target(now)
+        if kaira_target:
+            await check_and_send("카이라", f"⏰ 카이라 등장! ({kaira_target.hour:02d}:00)", kaira_target)
+
+        # ── 슈고15: 짝수 시각 정각 ──
+        s15_target = next_even_hour_target(now)
+        await check_and_send("슈고15", f"🛡️ 슈고 등장! ({s15_target.hour:02d}:00)", s15_target)
+
+        # ── 슈고45: 홀수 시각 정각 ──
+        s45_target = next_odd_hour_target(now)
+        await check_and_send("슈고45", f"🛡️ 슈고 등장! ({s45_target.hour:02d}:00)", s45_target)
+
+        # ── 아그로: 12시간 30초 간격 ──
+        if agro_next:
+            await check_and_send("아그로", "👹 아그로 등장!", agro_next)
+            if now >= agro_next:
+                agro_next += AGRO_INTERVAL
+                data["agro"]["next"] = agro_next.isoformat()
+                save()
+
         # ── 아티팩트 점령전: 수(2), 토(5) 22:10 ──
         if weekday in [2, 5]:
             target = now.replace(hour=22, minute=10, second=0, microsecond=0)
@@ -354,7 +395,7 @@ async def loop_check():
         # ── 어비스 보스: 수(2), 토(5) 22:40 ──
         if weekday in [2, 5]:
             target = now.replace(hour=22, minute=40, second=0, microsecond=0)
-            await check_and_send("어비스_보스", "👹 어비스 보스 등장!", target)
+            await check_and_send("어비스_보스", "💀 어비스 보스 등장!", target)
 
         # ── 수호신장 나흐마: 금(4), 일(6) 22:10 ──
         if weekday in [4, 6]:
@@ -369,14 +410,6 @@ async def loop_check():
                 target += timedelta(days=1)
             await check_and_send(key_name, f"🌌 시공 등장! ({h:02d}:00)", target)
 
-        # ── 슈고15: 짝수 시각 정각 ──
-        s15_target = next_even_hour_target(now)
-        await check_and_send("슈고15", f"🛡️ 슈고 등장! ({s15_target.hour:02d}:00)", s15_target)
-
-        # ── 슈고45: 홀수 시각 정각 ──
-        s45_target = next_odd_hour_target(now)
-        await check_and_send("슈고45", f"🛡️ 슈고 등장! ({s45_target.hour:02d}:00)", s45_target)
-
         # ── 차원침공: 매 시 30분 ──
         dim_target = next_dimensional_target(now)
         await check_and_send("차원침공", f"🌀 차원침공 시작! ({dim_target.hour:02d}:30)", dim_target)
@@ -385,11 +418,34 @@ async def loop_check():
         print("루프 에러:", e)
 
 # =========================
+# 커맨드
+# =========================
+
+@bot.tree.command(name="아그로", description="아그로 시간 등록 (예: 1245 -> 12시간 45분 후)")
+async def cmd_agro(interaction: discord.Interaction, time: str):
+    global agro_next
+    try:
+        time = time.strip().zfill(3)
+        mm, hh = int(time[-2:]), int(time[:-2]) if len(time) > 2 else 0
+        if mm >= 60:
+            raise ValueError
+        agro_next = datetime.now(KST) + timedelta(hours=hh, minutes=mm)
+        data["agro"]["next"] = agro_next.isoformat()
+        save()
+        await interaction.response.send_message(f"👹 아그로 등록: **{agro_next.strftime('%m/%d %H:%M')}**")
+    except:
+        await interaction.response.send_message("형식 오류!", ephemeral=True)
+
+# =========================
 # 실행 및 초기화
 # =========================
 
 @bot.event
 async def on_ready():
+    global agro_next
+    data.setdefault("agro", {})
+    if "next" in data["agro"]:
+        agro_next = datetime.fromisoformat(data["agro"]["next"]).astimezone(KST)
     bot.add_view(MainView())
     if not loop_check.is_running():
         loop_check.start()
